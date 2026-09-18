@@ -1,0 +1,225 @@
+Yes, I think the first four sentences are strong for Jane Street. The last sentence about availability is useful, but I would separate it slightly and make the wording more natural. Also, “although I’d prefer to work full-time” could be confusing because an internship is inherently full-time in many cases. If you mean you prefer a full-time internship rather than part-time, say that explicitly.
+
+I’d use:
+
+I’m interested in quantitative finance and in the ways software, mathematics, and data can be applied to financial problems. Jane Street especially appeals to me because of its focus on solving difficult problems through quantitative thinking, research, and technology. I enjoy solving problems whether they are numerical, computational, or logic-based, and I like situations where there may be several ways to approach a problem and I have to reason through which one makes the most sense. I would be excited to apply that way of thinking in a collaborative environment while continuing to learn and contributing to the team at Jane Street.
+
+I am also eligible and open to starting an internship in January or during the summer starting in May, and I would prefer a full-time internship.
+
+One small thing I wouldn't add is more praise about Jane Street. Your current paragraph already gives a clear reason for why you're interested, rather than sounding like you're just repeating their website. Jane Street emphasizes quantitative problem solving, collaboration, curiosity, and technology, so your statement lines up well with those themes.
+
+If this is specifically for Quantitative Trading, I think this is quite well targeted. If it's for Quantitative Research, I'd make one or two sentences more focused on statistics, data, ML, and experimentation.
+
+About the Position
+
+We’re looking for Software Engineers who want to help us design and build the systems and tools that run the firm. You’ll find Software Engineers in all parts of Jane Street, solving real problems in critical areas ranging from trading desks to our accounting team, as well as building foundational infrastructure, whether that means implementing network monitoring or risk models. 
+
+We are big believers in functional programming and, using OCaml, a statically -typed functional programming language, as our primary tool. More recently, Python has become a vital part of Jane Street’s research and trading work, acting as the go-to language for data analysis, visualization, and machine learning. 
+
+Beyond our own environment, we also recognize the value of open source software, leveraging it in our daily work and releasing over a million lines of our own code as open source. We’re also always looking for ways to expand open source projects, and provide ongoing support to things like Mercurial, the OCaml compiler, and the OPAM package manager. That said, we’re interested in talented engineers with experience in any language—most of us came in with little to no practical experience in OCaml before we joined.
+
+If you’d like to learn more, you can read about our interview process and meet some of our newest hires.
+
+About You
+
+We don’t expect you to have a background in functional programming, OCaml, Python, finance, or any other specific field—we’re looking for smart programmers who enjoy solving interesting problems. We’re more interested in how you think and learn than what you currently know. You should be:
+
+A top-notch programmer with a love for technology
+Intellectually curious, collaborative, and eager to learn
+Humble and unafraid to ask questions and admit mistakes
+
+what exactly are the requirements here
+
+Based on the description you pasted, the requirements are much broader than “know OCaml, finance, or functional programming.” They are primarily evaluating your programming ability and how you think.
+
+What they explicitly want
+1. Strong programming ability
+
+Their clearest technical requirement is:
+
+“A top-notch programmer with a love for technology.”
+
+For you, this means being comfortable with:
+
+Writing correct code
+Understanding algorithms and data structures
+Breaking down unfamiliar problems
+Debugging
+Reasoning about edge cases
+Learning unfamiliar languages/tools
+
+Your current LeetCode practice is directly relevant here. Problems like linked lists, two pointers, recursion/trees, and DP help demonstrate the type of fundamental problem-solving ability they're looking for.
+
+2. Ability to learn unfamiliar technology
+
+They explicitly say they do not require experience in:
+
+OCaml
+Functional programming
+Python
+Finance
+Any specific field
+
+So this is important:
+
+They are not asking you to learn OCaml before applying.
+
+They care more about whether you can learn it.
+
+Your experience across Python, Java, and JavaScript, plus moving between ML libraries and building different projects, can support this. For example, you've worked with traditional ML, neural networks, Android development, RAG systems, and a transformer/SLM project. That shows breadth and willingness to learn new technical areas.
+
+3. Genuine problem-solving ability
+
+This sentence is probably the most important:
+
+“We’re more interested in how you think and learn than what you currently know.”
+
+This means they likely care about whether you can encounter something like:
+
+A problem you've never seen before
+        ↓
+Understand the requirements
+        ↓
+Break it into smaller pieces
+        ↓
+Consider possible approaches
+        ↓
+Reason about tradeoffs
+        ↓
+Implement a solution
+        ↓
+Test and debug it
+
+Your application should demonstrate this through specific examples, rather than simply claiming:
+
+"I am a strong problem solver."
+
+For example, a technically difficult project where you had to figure things out yourself is much stronger evidence.
+
+4. Intellectual curiosity
+
+They want someone who naturally asks:
+
+Why does this work?
+How can this be improved?
+What are the tradeoffs?
+What happens at scale?
+What don't I understand yet?
+
+For you, this could be demonstrated by your progression from using ML libraries to exploring how language models work internally and building/training a transformer-based small language model yourself.
+
+That is probably a particularly good fit for the "how you think and learn" part of this job description.
+
+5. Collaboration
+
+This isn't a "sit alone and solve LeetCode all day" job.
+
+They explicitly want someone:
+
+“collaborative”
+
+So they want evidence that you can:
+
+Work with other engineers
+Explain your reasoning
+Listen to other approaches
+Ask for help when appropriate
+Give and receive feedback
+Work toward a shared solution
+
+Your hackathon experience is potentially useful here, especially because you had to work with a team you barely knew and contribute to planning the project and its reward system.
+
+6. Humility
+
+This is unusually explicitly stated:
+
+“Humble and unafraid to ask questions and admit mistakes.”
+
+They don't expect you to pretend you know everything.
+
+In fact, saying something like:
+
+"I haven't worked with OCaml before, but..."
+
+isn't necessarily bad for this role.
+
+If followed by evidence that you learn quickly, it can be a positive:
+
+"I haven't worked with OCaml or functional programming yet, but I enjoy learning unfamiliar technologies and have repeatedly had to pick up new tools and frameworks while building projects."
+
+What is not actually required
+
+From the description you provided, you do not need:
+
+Skill	Required?
+OCaml	❌ No
+Functional programming	❌ No
+Finance knowledge	❌ No
+Python	❌ No
+ML experience	❌ No
+Prior trading experience	❌ No
+Specific language	❌ No
+
+The actual requirements are closer to:
+
+Requirement	Importance
+Strong programming fundamentals	⭐⭐⭐⭐⭐
+Problem-solving ability	⭐⭐⭐⭐⭐
+Ability to learn	⭐⭐⭐⭐⭐
+Intellectual curiosity	⭐⭐⭐⭐
+Collaboration	⭐⭐⭐⭐
+Humility / willingness to ask questions	⭐⭐⭐⭐
+Specific tech stack experience	⭐
+My interpretation for you
+
+Your strongest potential matches are probably:
+
+Python/Java programming foundation
+ML and AI project experience
+Building a transformer/SLM from scratch and experimenting with its design
+RAG/knowledge assistant work
+Curiosity about how systems and models actually work
+Current algorithm and data structure practice
+Hackathon/team experience
+
+Your main thing to improve for this particular role is probably core software engineering evidence.
+
+Jane Street isn't hiring you specifically as an ML engineer here. Their description includes infrastructure, trading systems, internal tools, accounting systems, networking, and risk models. So alongside your AI projects, you want to demonstrate:
+
+Strong code design
+Algorithms/data structures
+Debugging
+Building reliable software
+Working with nontrivial systems
+
+In one sentence:
+
+They want a very strong programmer who can solve unfamiliar problems, learn quickly, collaborate well, and isn't afraid to say, "I don't know yet, but I'll figure it out."
+
+That is the lens I'd use when tailoring your resume and application answers for this position.
+
+Today 4:13 PM
+nvidia/Nemotron-3-Embed-1B-BF16 correct?
+
+Yes. nvidia/Nemotron-3-Embed-1B-BF16 is the correct Hugging Face model ID.
+
+It's NVIDIA's ~1.14B parameter text-embedding model, designed specifically for retrieval, semantic search, and RAG. It produces 2048-dimensional embeddings and supports 34 languages.
+
+For your RAG project, you'd load it like:
+
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("nvidia/Nemotron-3-Embed-1B-BF16")
+
+One important detail: NVIDIA recommends using:
+
+query: <user question>
+passage: <document chunk>
+
+for retrieval. The model's embeddings are already L2-normalized, so cosine similarity and dot product are equivalent.
+
+Also, BF16 matters: the checkpoint is about 2.28 GB, so it's much more substantial than something like all-MiniLM-L6-v2.
+
+Nemotron-3-Embed-1B-BF16 on Hugging Face
+
+Ad
