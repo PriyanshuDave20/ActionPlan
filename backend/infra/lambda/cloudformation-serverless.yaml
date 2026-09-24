@@ -1,101 +1,60 @@
-# CloudFormation template for the serverless backend: creates the ECR
-# repository, IAM execution role, Lambda function, CodeBuild project,
-# CodeBuild IAM role, and CloudWatch log group.
-#
-# Image builds are performed by AWS CodeBuild using buildspec.yml.
-# The local machine only needs the AWS CLI and Git/source code.
-# Docker Desktop is NOT required.
-#
-# Deploy:
-#   aws cloudformation deploy --region us-east-2 --stack-name workplace-operations-serverless ^
-#       --template-file ./infra/lambda/cloudformation-serverless.yaml ^
-#       --parameter-overrides LambdaRoleName=workplace-operations-lambda-role ^
-#       --capabilities CAPABILITY_NAMED_IAM
-#
-# Then start a CodeBuild build to build and push the image:
-#   aws codebuild start-build --region us-east-2 --project-name workplace-operations-agent-build
-#
-# Or use the deployment script:
-#   .\scripts\deploy_lambda.ps1
-#
-# Then create the API Gateway HTTP API (README: "API Gateway HTTP API").
-
 AWSTemplateFormatVersion: "2010-09-09"
-Description: >-
-  AI Workplace Operations Agent - serverless backend resources
-  (ECR repository, IAM roles, Lambda function, CodeBuild project, CloudWatch logs).
+Description: AI Workplace Operations Agent - serverless backend resources.
 
 Parameters:
   LambdaRoleName:
     Type: String
     Default: workplace-operations-lambda-role
-    Description: Name of the IAM role the Lambda function will assume.
-
   EcrRepositoryName:
     Type: String
     Default: workplace-operations-agent
-
   FunctionName:
     Type: String
-    Default: workplace-operations-agent
-
+    Default: ActionPlan
   MemoryMb:
     Type: Number
-    Default: 2048
+    Default: 128
     MaxValue: 10240
-
   TimeoutSeconds:
     Type: Number
-    Default: 60
+    Default: 3
     MaxValue: 900
-
   EphemeralStorageMb:
     Type: Number
-    Default: 1024
+    Default: 512
     MaxValue: 5120
-
   DynamoDbTableName:
     Type: String
     Default: ActionPlanner
-    Description: Name of the existing DynamoDB table used for durable memory.
-
   ImageTag:
     Type: String
     Default: latest
-    Description: >-
-      Docker image tag for the Lambda container image.
-      Use a commit SHA or build ID for immutable tags in production.
-
   CodeBuildProjectName:
     Type: String
     Default: workplace-operations-agent-build
-    Description: Name of the CodeBuild project that builds the Lambda image.
-
   CodeBuildServiceRoleName:
     Type: String
     Default: workplace-operations-codebuild-role
-    Description: Name of the IAM role the CodeBuild project assumes.
-
   CodeBuildLogLevel:
     Type: String
     Default: INFO
     AllowedValues: [INFO, ERROR]
-    Description: Log level for CodeBuild CloudWatch Logs.
-
   GitHubSourceLocation:
     Type: String
-    Description: >-
-      Git repository URL for CodeBuild source (e.g.,
-      https://github.com/username/repo.git). CodeBuild clones
-      this repository to build the Docker image.
-
+    Default: ""
   GitHubConnectionArn:
     Type: String
     Default: ""
-    Description: >-
-      ARN of the CodeBuild GitHub connection. Set this if using GitHub as
-      the CodeBuild source. Leave empty if CodeBuild source is overridden
-      at build time via the AWS CLI.
+  AmplifyDomain:
+    Type: String
+    Default: https://main.d2uczfq6giy37z.amplifyapp.com
+
+Conditions:
+  HasGitHubSource:
+    Fn::Not:
+      - Fn::Equals:
+          - !Ref GitHubSourceLocation
+          - ""
 
 Resources:
   EcrRepository:
@@ -189,7 +148,7 @@ Resources:
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
                   - ecr:PutImage
-                Resource: "*"
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrRepositoryName}"
         - PolicyName: CloudWatchLogsAccess
           PolicyDocument:
             Version: "2012-10-17"
@@ -212,7 +171,7 @@ Resources:
                   - codebuild:UpdateReport
                   - codebuild:BatchPutTestCases
                   - codebuild:BatchPutCodeCoverages
-                Resource: "*"
+                Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report/${CodeBuildProjectName}/*"
 
   CodeBuildLogGroup:
     Type: AWS::Logs::LogGroup
@@ -250,14 +209,20 @@ Resources:
           - Name: IMAGE_TAG
             Value: !Ref ImageTag
       Source:
-        Type: GITHUB
-        Location: !Ref GitHubSourceLocation
+        Type: !If [HasGitHubSource, GITHUB, NO_SOURCE]
+        Location: !If [HasGitHubSource, !Ref GitHubSourceLocation, !Ref "AWS::NoValue"]
         BuildSpec: buildspec.yml
         GitCloneDepth: 1
-        GitHubConnectionArn: !Ref GitHubConnectionArn
+        GitHubConnectionArn: !If [HasGitHubSource, !Ref GitHubConnectionArn, !Ref "AWS::NoValue"]
       Tags:
         - Key: Project
           Value: workplace-operations-agent
+
+  CodeBuildLogGroupLambda:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${FunctionName}"
+      RetentionInDays: 30
 
   LambdaFunction:
     Type: AWS::Lambda::Function
@@ -290,9 +255,9 @@ Resources:
           EMBEDDING_PROVIDER: nvidia
           EMBEDDING_MODEL: nvidia/nemotron-3-embed-1b
           VECTOR_STORE: zilliz
-          LANGCHAIN_TRACING_V2: "false"
+          LANGCHAIN_TRACING_V2: "true"
           LANGCHAIN_PROJECT: workplace-operations-agent
-          FRONTEND_ORIGIN: ""
+          FRONTEND_ORIGIN: !Ref AmplifyDomain
 
 Outputs:
   LambdaRoleArn:
@@ -305,20 +270,20 @@ Outputs:
         Repo: !Ref EcrRepositoryName
   LambdaFunctionName:
     Value: !Ref FunctionName
+    Description: Name of the Lambda function.
   LambdaFunctionArn:
     Value: !GetAtt LambdaFunction.Arn
     Description: ARN of the Lambda function.
   CodeBuildProjectName:
     Value: !Ref CodeBuildProjectName
-    Description: Name of the CodeBuild project that builds the Lambda image.
   CodeBuildLogGroupName:
-    Value: !Sub "/aws/codebuild/${CodeBuildProjectName}"
-    Description: CloudWatch log group for CodeBuild logs.
+    Value: !Sub /aws/codebuild/${CodeBuildProjectName}
   CodeBuildServiceRoleArn:
     Value: !GetAtt CodeBuildServiceRole.Arn
-    Description: ARN of the CodeBuild service role.
   DynamoDbTableName:
     Value: !Ref DynamoDbTableName
   ApiGatewayUrl:
     Value: !Sub "https://${AWS::AccountId}.execute-api.${AWS::Region}.amazonaws.com"
     Description: Base URL for the API Gateway HTTP API.
+  AmplifyDomain:
+    Value: !Ref AmplifyDomain

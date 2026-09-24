@@ -1,15 +1,24 @@
 import { useEffect, useState } from "react";
 
-import { continueGoalRequest, createGoalRequest, getWorkflowRequest, listWorkflowsRequest } from "./api/client";
+import {
+  continueGoalRequest,
+  createGoalRequest,
+  getWorkflowRequest,
+  listWorkflowsRequest,
+  checkBackendHealth,
+  type BackendStatus,
+} from "./api/client";
 import type { WorkflowSummary } from "./api/workflow-types";
 import { matchRoute, navigate, useHashRoute } from "./lib/useHashRoute";
 
 function Layout({
   children,
   activeWorkflows,
+  backendStatus,
 }: {
   children: React.ReactNode;
   activeWorkflows?: boolean;
+  backendStatus?: BackendStatus;
 }) {
   return (
     <div className="app-shell">
@@ -29,6 +38,11 @@ function Layout({
           </button>
           {activeWorkflows ? (
             <span className="nav-badge">active workflows</span>
+          ) : null}
+          {backendStatus !== undefined ? (
+            <span className={`nav-badge ${backendStatus === "active" ? "status-ok" : "status-error"}`}>
+              Backend: {backendStatus}
+            </span>
           ) : null}
         </nav>
       </header>
@@ -418,6 +432,35 @@ function AboutPage() {
 
 export default function App() {
   const route = useHashRoute();
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await checkBackendHealth();
+        if (!cancelled) {
+          setBackendStatus(status);
+        }
+      } catch {
+        if (!cancelled) {
+          setBackendStatus("error");
+        }
+      }
+    })();
+    const interval = setInterval(async () => {
+      try {
+        const status = await checkBackendHealth();
+        setBackendStatus(status);
+      } catch {
+        setBackendStatus("error");
+      }
+    }, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   const workflowMatch = matchRoute(route, "workflow/:id");
   let content: React.ReactNode;
@@ -444,6 +487,8 @@ export default function App() {
   }
 
   return (
-    <Layout activeWorkflows={Boolean(workflowMatch)}>{content}</Layout>
+    <Layout activeWorkflows={Boolean(workflowMatch)} backendStatus={backendStatus}>
+      {content}
+    </Layout>
   );
 }

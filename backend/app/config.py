@@ -95,12 +95,12 @@ class Settings(BaseSettings):
     def resolved_cors_origins(self) -> list[str]:
         """Allowed browser origins: CORS_ORIGINS (comma-separated) plus FRONTEND_ORIGIN."""
         origins = [
-            origin.strip()
+            origin.strip().rstrip("/")
             for origin in self.cors_origins.split(",")
             if origin.strip()
         ]
         if self.frontend_origin and self.frontend_origin.strip():
-            origins.append(self.frontend_origin.strip())
+            origins.append(self.frontend_origin.strip().rstrip("/"))
         return origins
 
 

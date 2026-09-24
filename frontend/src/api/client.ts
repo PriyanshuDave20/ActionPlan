@@ -8,12 +8,41 @@ import type {
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+export type BackendStatus = "checking" | "active" | "inactive" | "error";
+
 export class ApiError extends Error {
   status: number;
+  type: "network" | "http" | "cors" | "unknown";
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, type: "network" | "http" | "cors" | "unknown" = "unknown") {
     super(message);
     this.status = status;
+    this.type = type;
+  }
+}
+
+export async function checkBackendHealth(): Promise<BackendStatus> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(`${API_BASE_URL}/health`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (response.ok) {
+      const data = await response.json();
+      if (data.status === "ok") {
+        return "active";
+      }
+      return "inactive";
+    }
+    return "inactive";
+  } catch (err: unknown) {
+    if (err instanceof TypeError && err.message.includes("fetch")) {
+      return "error";
+    }
+    return "error";
   }
 }
 
@@ -22,7 +51,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${API_BASE_URL}${path}`, init);
   } catch {
-    throw new ApiError(0, "Cannot reach the backend. Is the API running?");
+    throw new ApiError(0, "Cannot reach the backend at ${API_BASE_URL}. Is the API running?", "network");
   }
   if (!response.ok) {
     let detail = `Request failed with status ${response.status}`;
@@ -34,7 +63,8 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // fall through with the default message
     }
-    throw new ApiError(response.status, detail);
+    const errorType: "http" | "cors" | "unknown" = response.status === 403 ? "cors" : "http";
+    throw new ApiError(response.status, detail, errorType);
   }
   return (await response.json()) as T;
 }
