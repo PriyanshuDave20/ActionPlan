@@ -21,14 +21,17 @@ phases:
 
   build:
     commands:
-      - 'echo "Current directory:"'
+      - 'echo "=== BUILD ENVIRONMENT ==="'
       - 'pwd'
-      - 'echo "Backend files:"'
       - 'ls -la'
-      - 'echo "Building Docker image from Dockerfile.lambda for linux/amd64"'
+      - 'echo "=== DOCKER VERSION ==="'
       - 'docker version'
-      - 'docker build --platform linux/amd64 -t "${IMAGE_URI}" -f Dockerfile.lambda .'
-      - 'echo "Docker build succeeded"'  
+      - 'echo "=== DOCKER INFO ==="'
+      - 'docker info'
+      - 'echo "=== DOCKERFILE ==="'
+      - 'ls -l Dockerfile.lambda'
+      - 'echo "=== DOCKER BUILD ==="'
+      - 'docker build --platform linux/amd64 -t "${IMAGE_URI}" -f Dockerfile.lambda .'  
 
   post_build:
     commands:
