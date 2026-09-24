@@ -21,9 +21,7 @@ phases:
   build:
     commands:
       - echo "Building Docker image from Dockerfile.lambda for linux/amd64"
-      - docker buildx build --platform linux/amd64 --provenance=false \
-          -t "${IMAGE_URI}" \
-          -f Dockerfile.lambda .
+      - docker buildx build --platform linux/amd64 --provenance=false -t "${IMAGE_URI}" -f Dockerfile.lambda .
       - if [ $? -ne 0 ]; then echo "Docker build failed"; exit 1; fi
       - echo "Docker build succeeded"
 
@@ -38,12 +36,12 @@ phases:
       - docker push "${REGISTRY}/${ECR_REPOSITORY_NAME}:latest"
       - echo "Build completed successfully"
       - echo "Final image URI: ${IMAGE_URI}"
-      - echo "IMAGE_URI=${IMAGE_URI}" >> image-uri.txt
+      - echo "IMAGE_URI=${IMAGE_URI}" > image-uri.txt
 
 artifacts:
   files:
     - image-uri.txt
-  base-directory: .
+  base-directory: backend
   discard-paths: yes
 
 cache:
