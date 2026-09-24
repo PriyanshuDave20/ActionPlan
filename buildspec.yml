@@ -20,7 +20,12 @@ phases:
       - 'echo "ECR authentication succeeded"'
   build:
     commands:
+      - 'echo "Current directory:"'
+      - 'pwd'
+      - 'echo "Backend files:"'
+      - 'ls -la'
       - 'echo "Building Docker image from Dockerfile.lambda for linux/amd64"'
+      - 'docker buildx version'
       - 'docker buildx build --platform linux/amd64 --provenance=false -t "${IMAGE_URI}" -f Dockerfile.lambda .'
       - 'if [ $? -ne 0 ]; then echo "Docker build failed"; exit 1; fi'
       - 'echo "Docker build succeeded"'
