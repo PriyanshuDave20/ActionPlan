@@ -209,7 +209,7 @@ Resources:
           - Name: IMAGE_TAG
             Value: !Ref ImageTag
       Source:
-        Type: !If [HasGitHubSource, GITHUB, NO_SOURCE]
+        Type: GITHUB
         Location: !If [HasGitHubSource, !Ref GitHubSourceLocation, !Ref "AWS::NoValue"]
         BuildSpec: buildspec.yml
         GitCloneDepth: 1
