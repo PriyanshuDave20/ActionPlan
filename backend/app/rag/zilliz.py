@@ -32,6 +32,8 @@ class ZillizVectorStore:
         from pymilvus import DataType, FieldSchema, CollectionSchema
 
         if self._client.has_collection(self.collection_name):
+            self._ensure_index()
+            self._ensure_loaded()
             return
         schema = CollectionSchema(
             fields=[
@@ -47,6 +49,45 @@ class ZillizVectorStore:
             collection_name=self.collection_name,
             schema=schema,
         )
+        self._ensure_index()
+        self._ensure_loaded()
+
+    def _ensure_index(self) -> None:
+        """Zilliz Cloud loads collections only after a vector index exists;
+        AUTOINDEX picks the default index type per dimension."""
+        index_info = self._client.list_indexes(self.collection_name)
+        if not index_info:
+            from pymilvus.milvus_client.index import IndexParams
+
+            index_params = IndexParams()
+            index_params.add_index(
+                field_name="embedding",
+                index_type="AUTOINDEX",
+                metric_type="COSINE",
+            )
+            self._client.create_index(
+                collection_name=self.collection_name,
+                index_params=index_params,
+                timeout=120,
+            )
+
+    def _ensure_loaded(self) -> None:
+        """Milvus/Zilliz searches only run against collections loaded into
+        memory. Newly created or previously loaded collections may not be
+        loaded yet, so load idempotently before any search."""
+        try:
+            from pymilvus import utility
+
+            from pymilvus.milvus_client import connections
+
+            conn = connections.get_connection(self._client.conn_name)
+            state = utility.load_state(self.collection_name, using=conn)
+            if state != "Loaded":
+                self._client.load_collection(self.collection_name)
+        except Exception:
+            # load_state may not exist across pymilvus versions; loading twice
+            # is harmless, so fall back to a direct, idempotent load.
+            self._client.load_collection(self.collection_name)
 
     def add(self, content: str, metadata: dict[str, Any], embedding: list[float]) -> None:
         import uuid

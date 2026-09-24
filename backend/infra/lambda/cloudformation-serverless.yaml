@@ -1,0 +1,324 @@
+# CloudFormation template for the serverless backend: creates the ECR
+# repository, IAM execution role, Lambda function, CodeBuild project,
+# CodeBuild IAM role, and CloudWatch log group.
+#
+# Image builds are performed by AWS CodeBuild using buildspec.yml.
+# The local machine only needs the AWS CLI and Git/source code.
+# Docker Desktop is NOT required.
+#
+# Deploy:
+#   aws cloudformation deploy --region us-east-2 --stack-name workplace-operations-serverless ^
+#       --template-file ./infra/lambda/cloudformation-serverless.yaml ^
+#       --parameter-overrides LambdaRoleName=workplace-operations-lambda-role ^
+#       --capabilities CAPABILITY_NAMED_IAM
+#
+# Then start a CodeBuild build to build and push the image:
+#   aws codebuild start-build --region us-east-2 --project-name workplace-operations-agent-build
+#
+# Or use the deployment script:
+#   .\scripts\deploy_lambda.ps1
+#
+# Then create the API Gateway HTTP API (README: "API Gateway HTTP API").
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  AI Workplace Operations Agent - serverless backend resources
+  (ECR repository, IAM roles, Lambda function, CodeBuild project, CloudWatch logs).
+
+Parameters:
+  LambdaRoleName:
+    Type: String
+    Default: workplace-operations-lambda-role
+    Description: Name of the IAM role the Lambda function will assume.
+
+  EcrRepositoryName:
+    Type: String
+    Default: workplace-operations-agent
+
+  FunctionName:
+    Type: String
+    Default: workplace-operations-agent
+
+  MemoryMb:
+    Type: Number
+    Default: 2048
+    MaxValue: 10240
+
+  TimeoutSeconds:
+    Type: Number
+    Default: 60
+    MaxValue: 900
+
+  EphemeralStorageMb:
+    Type: Number
+    Default: 1024
+    MaxValue: 5120
+
+  DynamoDbTableName:
+    Type: String
+    Default: ActionPlanner
+    Description: Name of the existing DynamoDB table used for durable memory.
+
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: >-
+      Docker image tag for the Lambda container image.
+      Use a commit SHA or build ID for immutable tags in production.
+
+  CodeBuildProjectName:
+    Type: String
+    Default: workplace-operations-agent-build
+    Description: Name of the CodeBuild project that builds the Lambda image.
+
+  CodeBuildServiceRoleName:
+    Type: String
+    Default: workplace-operations-codebuild-role
+    Description: Name of the IAM role the CodeBuild project assumes.
+
+  CodeBuildLogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [INFO, ERROR]
+    Description: Log level for CodeBuild CloudWatch Logs.
+
+  GitHubSourceLocation:
+    Type: String
+    Description: >-
+      Git repository URL for CodeBuild source (e.g.,
+      https://github.com/username/repo.git). CodeBuild clones
+      this repository to build the Docker image.
+
+  GitHubConnectionArn:
+    Type: String
+    Default: ""
+    Description: >-
+      ARN of the CodeBuild GitHub connection. Set this if using GitHub as
+      the CodeBuild source. Leave empty if CodeBuild source is overridden
+      at build time via the AWS CLI.
+
+Resources:
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref EcrRepositoryName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      RepositoryPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: LambdaPull
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+          - Sid: AccountPush
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:GetRepositoryPolicy
+              - ecr:DescribeRepositories
+              - ecr:ListImages
+              - ecr:DescribeImages
+              - ecr:BatchGetImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+              - ecr:PutImage
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref LambdaRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBMemoryAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDbTableName}"
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref CodeBuildServiceRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EcrPushAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:DescribeRepositories
+                  - ecr:ListImages
+                  - ecr:DescribeImages
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: "*"
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${CodeBuildProjectName}:*"
+        - PolicyName: ReportAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:CreateReportGroup
+                  - codebuild:CreateReport
+                  - codebuild:UpdateReport
+                  - codebuild:BatchPutTestCases
+                  - codebuild:BatchPutCodeCoverages
+                Resource: "*"
+
+  CodeBuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${CodeBuildProjectName}"
+      RetentionInDays: 30
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref CodeBuildProjectName
+      Description: Builds the Lambda container image and pushes to ECR
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      TimeoutInMinutes: 30
+      QueuedTimeoutInMinutes: 15
+      BuildLogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub "/aws/codebuild/${CodeBuildProjectName}"
+          StreamName: build
+        S3Logs:
+          Status: DISABLED
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/standard:5.0
+        ComputeType: BUILD_GENERAL1_SMALL
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_REGION
+            Value: !Ref "AWS::Region"
+          - Name: ECR_REPOSITORY_NAME
+            Value: !Ref EcrRepositoryName
+          - Name: IMAGE_TAG
+            Value: !Ref ImageTag
+      Source:
+        Type: GITHUB
+        Location: !Ref GitHubSourceLocation
+        BuildSpec: buildspec.yml
+        GitCloneDepth: 1
+        GitHubConnectionArn: !Ref GitHubConnectionArn
+      Tags:
+        - Key: Project
+          Value: workplace-operations-agent
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaExecutionRole
+    Properties:
+      FunctionName: !Ref FunctionName
+      PackageType: Image
+      Code:
+        ImageUri: !Sub
+          - "${AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repo}:${Tag}"
+          - AccountId: !Ref "AWS::AccountId"
+            Repo: !Ref EcrRepositoryName
+            Tag: !Ref ImageTag
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: !Ref MemoryMb
+      Timeout: !Ref TimeoutSeconds
+      EphemeralStorage:
+        Size: !Ref EphemeralStorageMb
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          AWS_REGION: !Ref "AWS::Region"
+          DATA_DIR: /tmp/data
+          DYNAMODB_TABLE_NAME: !Ref DynamoDbTableName
+          MEMORY_BACKEND: dynamodb
+          LLM_PROVIDER: nvidia
+          LLM_MODEL: nvidia/nemotron-3.5-lightning-30b-a3b
+          LLM_BASE_URL: https://integrate.api.nvidia.com/v1
+          EMBEDDING_PROVIDER: nvidia
+          EMBEDDING_MODEL: nvidia/nemotron-3-embed-1b
+          VECTOR_STORE: zilliz
+          LANGCHAIN_TRACING_V2: "false"
+          LANGCHAIN_PROJECT: workplace-operations-agent
+          FRONTEND_ORIGIN: ""
+
+Outputs:
+  LambdaRoleArn:
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Description: ARN of the Lambda execution role.
+  EcrRepositoryUri:
+    Value: !Sub
+      - "${AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repo}"
+      - AccountId: !Ref "AWS::AccountId"
+        Repo: !Ref EcrRepositoryName
+  LambdaFunctionName:
+    Value: !Ref FunctionName
+  LambdaFunctionArn:
+    Value: !GetAtt LambdaFunction.Arn
+    Description: ARN of the Lambda function.
+  CodeBuildProjectName:
+    Value: !Ref CodeBuildProjectName
+    Description: Name of the CodeBuild project that builds the Lambda image.
+  CodeBuildLogGroupName:
+    Value: !Sub "/aws/codebuild/${CodeBuildProjectName}"
+    Description: CloudWatch log group for CodeBuild logs.
+  CodeBuildServiceRoleArn:
+    Value: !GetAtt CodeBuildServiceRole.Arn
+    Description: ARN of the CodeBuild service role.
+  DynamoDbTableName:
+    Value: !Ref DynamoDbTableName
+  ApiGatewayUrl:
+    Value: !Sub "https://${AWS::AccountId}.execute-api.${AWS::Region}.amazonaws.com"
+    Description: Base URL for the API Gateway HTTP API.

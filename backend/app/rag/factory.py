@@ -3,6 +3,22 @@ from app.rag.embeddings import LocalHashEmbeddings, NVIDIAEmbeddingProvider
 from app.rag.vector_store import InMemoryVectorStore, LocalVectorStore, VectorRetriever
 
 
+class LangChainEmbeddingsAdapter:
+    """Expose langchain embedding objects through the app's ``embed`` contract.
+
+    ``VectorRetriever`` (and the ``EmbeddingsProvider`` protocol) call
+    ``embed([query])``; langchain's ``OpenAIEmbeddings`` only offers
+    ``embed_documents``/``embed_query``. This adapter bridges the two without
+    changing which models/endpoints are used for any provider.
+    """
+
+    def __init__(self, embeddings) -> None:
+        self._embeddings = embeddings
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return self._embeddings.embed_documents(texts)
+
+
 def create_embeddings(settings: Settings):
     provider = (settings.embedding_provider or "").lower().strip()
 
@@ -13,12 +29,14 @@ def create_embeddings(settings: Settings):
         base_url = settings.resolved_embedding_base_url
         api_key = settings.resolved_embedding_api_key
         if model and base_url and api_key:
-            return OpenAIEmbeddings(
-                model=model,
-                api_key=api_key,
-                base_url=base_url,
-                check_embedding_ctx_length=False,
-                timeout=120,
+            return LangChainEmbeddingsAdapter(
+                OpenAIEmbeddings(
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url,
+                    check_embedding_ctx_length=False,
+                    timeout=120,
+                )
             )
         if provider == "nvidia" and model and api_key:
             return NVIDIAEmbeddingProvider(

@@ -1,0 +1,40 @@
+# Secrets - never copy into the image
+.env
+.env.*
+!.env.example
+
+# SCM / dev metadata
+.git
+.gitignore
+.gitattributes
+**/.DS_Store
+Thumbs.db
+
+# Python caches / virtualenvs / packaging artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+.python-version
+
+# Local runtime data (never required in the Lambda image)
+/data/
+*.log
+
+# Non-runtime project content
+documents/
+scripts/
+tests/
+frontend/
+docs/
+*.ps1
+*.yml
+*.yaml
+README.md
+Dockerfile
+docker-compose.yml

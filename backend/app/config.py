@@ -53,8 +53,11 @@ class Settings(BaseSettings):
     # Web frontend (optional static hosting)
     frontend_dir: Path = _BACKEND_ROOT.parent / "frontend" / "dist"
 
-    # CORS: comma-separated origins allowed to call the API from a browser
+    # CORS: comma-separated origins allowed to call the API from a browser.
+    # FRONTEND_ORIGIN is the single production origin (the Amplify frontend
+    # URL) and is merged into the allow-list when set.
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    frontend_origin: str | None = None
 
     # AWS
     aws_region: str = "us-east-2"
@@ -87,6 +90,18 @@ class Settings(BaseSettings):
         if self.embedding_provider == "nvidia":
             return "https://integrate.api.nvidia.com/v1"
         return self.openai_base_url or self.llm_base_url
+
+    @property
+    def resolved_cors_origins(self) -> list[str]:
+        """Allowed browser origins: CORS_ORIGINS (comma-separated) plus FRONTEND_ORIGIN."""
+        origins = [
+            origin.strip()
+            for origin in self.cors_origins.split(",")
+            if origin.strip()
+        ]
+        if self.frontend_origin and self.frontend_origin.strip():
+            origins.append(self.frontend_origin.strip())
+        return origins
 
 
 def _apply_runtime_env(settings: Settings) -> None:

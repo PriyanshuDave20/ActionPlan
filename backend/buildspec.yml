@@ -1,0 +1,50 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo "Resolving AWS account and region"
+      - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - AWS_REGION=$(aws configure get region)
+      - REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+      - echo "ECR Registry: ${REGISTRY}"
+      - echo "Resolving image tag"
+      - IMAGE_TAG="${CODEBUILD_RESOLVED_SOURCE_VERSION:-latest}"
+      - IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY_NAME}:${IMAGE_TAG}"
+      - echo "Image URI: ${IMAGE_URI}"
+      - echo "Authenticating to ECR"
+      - aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${REGISTRY}"
+      - if [ $? -ne 0 ]; then echo "ECR login failed"; exit 1; fi
+      - echo "ECR authentication succeeded"
+
+  build:
+    commands:
+      - echo "Building Docker image from Dockerfile.lambda for linux/amd64"
+      - docker buildx build --platform linux/amd64 --provenance=false \
+          -t "${IMAGE_URI}" \
+          -f Dockerfile.lambda .
+      - if [ $? -ne 0 ]; then echo "Docker build failed"; exit 1; fi
+      - echo "Docker build succeeded"
+
+  post_build:
+    commands:
+      - echo "Pushing image to ECR"
+      - docker push "${IMAGE_URI}"
+      - if [ $? -ne 0 ]; then echo "Docker push failed"; exit 1; fi
+      - echo "Image pushed to ${IMAGE_URI}"
+      - echo "Also pushing latest tag"
+      - docker tag "${IMAGE_URI}" "${REGISTRY}/${ECR_REPOSITORY_NAME}:latest"
+      - docker push "${REGISTRY}/${ECR_REPOSITORY_NAME}:latest"
+      - echo "Build completed successfully"
+      - echo "Final image URI: ${IMAGE_URI}"
+      - echo "IMAGE_URI=${IMAGE_URI}" >> image-uri.txt
+
+artifacts:
+  files:
+    - image-uri.txt
+  base-directory: .
+  discard-paths: yes
+
+cache:
+  paths:
+    - '/root/.docker/**/*'

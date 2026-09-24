@@ -1,0 +1,27 @@
+# Lambda container image for the AI Workplace Operations Agent backend.
+#
+# The AWS Lambda Python base image includes the Lambda runtime and the
+# Runtime Interface Emulator for local execution. We copy only the runtime
+# source (app/, lambda_handler.py) plus pinned requirements. Secrets are
+# provided exclusively via Lambda environment variables at runtime; the
+# image contains no .env and no API keys.
+#
+# Build for x86_64 Linux:
+#   docker buildx build --platform linux/amd64 --provenance=false -t workplace-operations-agent:latest .
+#
+# Build context must be the backend/ directory (see deploy_lambda.ps1).
+
+FROM public.ecr.aws/lambda/python:3.12
+
+COPY requirements.txt ${LAMBDA_TASK_ROOT}/
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ${LAMBDA_TASK_ROOT}/app
+COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/lambda_handler.py
+
+# Lambda processes run on a read-only filesystem; route any temporary
+# scratch I/O to /tmp. Durable state stays in DynamoDB / Zilliz.
+ENV DATA_DIR=/tmp/data
+
+CMD ["lambda_handler.handler"]

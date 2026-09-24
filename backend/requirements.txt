@@ -1,0 +1,21 @@
+# Runtime dependencies for the AWS Lambda container image.
+# Pinned to the exact versions verified working in this project's local
+# development environment (Python 3.11). The Lambda base image installs
+# these inside the Linux container; it never uses the Windows Python env.
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+pydantic==2.10.4
+pydantic-settings==2.14.1
+langchain==0.3.30
+langchain-core==0.3.86
+langgraph==0.6.11
+langchain-openai==0.3.35
+langchain-ollama==0.3.10
+langchain-huggingface==0.3.1
+pymupdf==1.27.2.3
+python-multipart==0.0.20
+httpx==0.28.1
+openai==2.38.0
+pymilvus==2.5.7
+boto3==1.43.90
+mangum>=0.19,<1.0
