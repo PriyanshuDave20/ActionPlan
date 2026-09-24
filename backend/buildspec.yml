@@ -4,6 +4,7 @@ phases:
   pre_build:
     commands:
       - echo "Resolving AWS account and region"
+      - cd backend
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - AWS_REGION=$(aws configure get region)
       - REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
