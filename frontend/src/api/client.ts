@@ -6,7 +6,7 @@ import type {
 } from "./workflow-types";
 
 const API_BASE_URL =
-  import.meta.env.example.VITE_API_BASE_URL;
+  import.meta.env.VITE_API_BASE_URL;
 
 export type BackendStatus = "checking" | "active" | "inactive" | "error";
 
