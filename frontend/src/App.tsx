@@ -6,73 +6,197 @@ import {
   getWorkflowRequest,
   listWorkflowsRequest,
   checkBackendHealth,
+  ingestDocumentRequest,
   type BackendStatus,
+  type IngestResponse,
 } from "./api/client";
-import type { WorkflowSummary } from "./api/workflow-types";
+import type { WorkflowSummary, IngestResponse as IngestResponseType } from "./api/workflow-types";
 import { matchRoute, navigate, useHashRoute } from "./lib/useHashRoute";
+import { Layout, SidebarNav, SidebarStatus } from "./Layout";
 
-function Layout({
-  children,
-  activeWorkflows,
-  backendStatus,
-}: {
-  children: React.ReactNode;
-  activeWorkflows?: boolean;
-  backendStatus?: BackendStatus;
-}) {
+/* Default session metadata – keep whatever the backend already sets */
+const sessionEnv: Record<string, string> = {};
+
+export default function App() {
+  const route = useHashRoute();
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await checkBackendHealth();
+        if (!cancelled) setBackendStatus(status);
+      } catch {
+        if (!cancelled) setBackendStatus("error");
+      }
+    })();
+    const interval = setInterval(async () => {
+      try {
+        const status = await checkBackendHealth();
+        setBackendStatus(status);
+      } catch {
+        setBackendStatus("error");
+      }
+    }, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const workflowMatch = matchRoute(route, "workflow/:id");
+  const page = !route
+    ? "home"
+    : route === "history"
+      ? "history"
+      : route === "about"
+        ? "about"
+        : workflowMatch
+          ? "workflow"
+          : "unknown";
+
+  /* ----------------------------------------------------------------------
+   * Render the correct page component
+   * ---------------------------------------------------------------------- */
+  let pageContent: React.ReactNode;
+  switch (page) {
+    case "home":
+      pageContent = <HomePage />;
+      break;
+    case "history":
+      pageContent = <HistoryPage />;
+      break;
+    case "about":
+      pageContent = <AboutPage />;
+      break;
+    case "workflow":
+      pageContent = <WorkflowPage workflowId={workflowMatch!.params.id} />;
+      break;
+    default:
+      pageContent = <div>Page not found</div>;
+  }
+
+  return (
+    <Layout
+      page={page}
+      backendStatus={backendStatus}
+    >
+      {pageContent}
+    </Layout>
+  );
+}
+
+/* --------------------------------------------------------------------------
+ * Layout – sidebar + main content
+ * -------------------------------------------------------------------------- */
+function Layout({ page, backendStatus, children }: { page: string; backendStatus: BackendStatus; children: React.ReactNode }) {
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#/">
-          Workplace Operations Agent
-        </a>
-        <nav className="nav">
-          <button type="button" onClick={() => navigate("")}>
-            New Request
-          </button>
-          <button type="button" onClick={() => navigate("history")}>
-            History
-          </button>
-          <button type="button" onClick={() => navigate("about")}>
-            About
-          </button>
-          {activeWorkflows ? (
-            <span className="nav-badge">active workflows</span>
-          ) : null}
-          {backendStatus !== undefined ? (
-            <span className={`nav-badge ${backendStatus === "active" ? "status-ok" : "status-error"}`}>
-              Backend: {backendStatus}
-            </span>
-          ) : null}
+      {/* ---------- Sidebar ---------- */}
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <div className="logo">AP</logo>
+          <div>
+            <span className="brand-text">ActionPlan</span>
+            <span className="subtext">AI Operations Agent</span>
+          </div>
+        </div>
+
+        <nav className="sidebar-nav">
+          <SidebarNav
+            route={route}
+            setRoute={/* no-op – hash changes handled by router */}
+            backendStatus={backendStatus}
+          />
+          <SidebarStatus backendStatus={backendStatus} />
         </nav>
-      </header>
-      <main className="content">{children}</main>
-      <footer className="footer">
-        Advisory agent - suggested actions are reviewed by people before being
-        executed.
-      </footer>
+      </aside>
+
+      {/* ---------- Main Content ---------- */}
+      <main className="main-content">
+        {/* Top utility bar – subtle system info */}
+        <section className="util-bar">
+          {/* Backend status pill */}
+          <span className="status-badge status-{backendStatus === "active" ? "ok" : backendStatus === "error" ? "error" : "checking"}">
+            {backendStatus}
+          </span>
+          {/* Workflow count from history */}
+          <span className="muted">
+            {page === "history" ? "workflows" : ""}
+          </span>
+        </section>
+
+        {/* Page content */}
+        <section className="page-content">{children}</section>
+      </main>
     </div>
   );
 }
 
-function Loading() {
-  return <div className="card">Loading…</div>;
+/* --------------------------------------------------------------------------
+ * Sidebar Navigation
+ * -------------------------------------------------------------------------- */
+function SidebarNav({ route, backendStatus }: { route: string; backendStatus: BackendStatus }) {
+  const navLinks = [
+    { key: "home", label: "New Request", icon: "↩", exact: "/" },
+    { key: "history", label: "Workflows", icon: "📜", exact: "/history" },
+    { key: "about", label: "About", icon: "/about" },
+  ];
+
+  return (
+    <nav>
+      {navLinks.map((link) => {
+        const isExact = route === link.exact;
+        return (
+          <button
+            key={link.key}
+            className={`nav-item ${isExact ? "active" : ""}`}
+            onClick={() => navigate(link.exact)}
+            aria-current={isExact ? "page" : undefined}
+          >
+            <span>{link.icon}</span> {link.label}
+          </button>
+        );
+      })}
+    </nav>
+  );
 }
 
-function ErrorBanner({ message }: { message: string }) {
-  return <div className="card error-card">Error: {message}</div>;
+/* --------------------------------------------------------------------------
+ * Sidebar System Status
+ * -------------------------------------------------------------------------- */
+function SidebarStatus({ backendStatus }: { backendStatus: BackendStatus }) {
+  const statusMap: Record<BackendStatus, { label: string; color: string }> = {
+    checking: { label: "Backend connected", color: var(--muted) },
+    active: { label: "Agent online", color: var(--good) },
+    error: { label: "Backend error", color: var(--bad) },
+    inactive: { label: "Backend idle", color: var(--muted) },
+  };
+
+  const { label, color } = statusMap[backendStatus] ?? statusMap.checking;
+  return (
+    <div className="sidebar-status">
+      <span className="status-dot" />
+      <span>{label}</span>
+    </div>
+  );
 }
 
+/* --------------------------------------------------------------------------
+ * HomePage – premium AI command-center style
+ * -------------------------------------------------------------------------- */
 function HomePage() {
   const [goal, setGoal] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadedDocuments, setUploadedDocuments] = useState<IngestResponseType[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (!goal.trim()) {
-      return;
-    }
+    if (!goal.trim()) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -84,34 +208,169 @@ function HomePage() {
     }
   }
 
+  function handleFileChange(file: File | null) {
+    setSelectedFile(file);
+  }
+
+  async function handleUploadDocument() {
+    if (!selectedFile) return;
+    setIsUploading(true);
+    try {
+      const response = await ingestDocumentRequest(selectedFile);
+      setUploadedDocuments(prev => [...prev, response]);
+      setSelectedFile(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  // Suggestion chips that populate the textarea (no auto-submit)
+  const suggestionChips = [
+    "Prepare a project for production",
+    "Plan a product launch",
+    "Organize a cross-team migration",
+  ];
+
   return (
-    <section className="page">
-      <h1>Create an action plan</h1>
+    <section className="page page-home">
+      <h1>AI WORKPLACE OPERATIONS</h1>
       <p className="lede">
-        Describe the work you need done. The agent will analyze the objective,
-        extract requirements, plan and validate an execution order, and
-        recommend the next action - without executing anything automatically.
+        Turn complex goals into clear action plans. Describe what you need to
+        accomplish and the agent will analyze, extract requirements, build a
+        structured workflow, and recommend the next best action.
       </p>
-      <form className="card form" onSubmit={handleSubmit}>
-        <label className="field">
-          <span>Goal</span>
-          <textarea
-            value={goal}
-            onChange={(event) => setGoal(event.target.value)}
-            placeholder="e.g. Prepare Project Alpha for production"
-            rows={4}
-            required
+
+      {/* Goal Input Composer */}
+      <div className="card composer-card">
+        <h3 style={{ margin: "0 0 12px", fontSize: 14, color: var(--muted) }}>
+          What are you trying to accomplish?
+        </h3>
+
+        <textarea
+          value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          placeholder="Describe what you need to accomplish…"
+          rows={6}
+          className="composer-textarea"
+          required
+        />
+        {/* Suggestion chips under the textarea */}
+        <div className="chips" style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, fontSize: 13, color: var(--muted) }}>
+          {suggestionChips.map((chip) => (
+            <button
+              key={chip}
+              className="chip"
+              style={{
+                padding: "6px 10px",
+                border: "1px solid var(--border)",
+                borderRadius: var.radius.md,
+                background: "transparent",
+                color: var(--muted),
+                cursor: "pointer",
+                transition: "all var(--transition-fast)",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter => (e.target.style.background = "var(--bg-soft)")
+              onMouseLeave => (e.target.style.background = "transparent")
+              onClick={() => setGoal(goal => goal + (goal ? " " : "") + chip)}
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+          <button
+            onClick={handleSubmit}
+            className="primary"
+            disabled={submitting}
+          >
+            {submitting ? "Analyzing…" : "Analyze goal"}
+          </button>
+        </div>
+      </div>
+
+      {/* "How it works" horizontal sequence */}
+      <div className="how-it-works" style={{ marginTop: 24, display: "flex", gap: 24, color: var(--muted), fontSize: 13 }}>
+        <div>01 <strong>Understand</strong></div>
+        <div>02 <strong>Plan</strong></div>
+        <div>03 <strong>Identify blockers</strong></div>
+        <div>04 <strong>Recommend</strong></div>
+      </div>
+
+      {/* Document upload section */}
+      <div className="card" style={{ marginTop: 24, borderColor: var(--accent) }}>
+        <h3 style={{ margin: "0 0 12px", fontSize: 13, color: var(--muted) }}>Add documents</h3>
+        {isUploading ? (
+          <p>Uploading document...</p>
+        ) : null}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="file"
+            accept=".pdf, .txt, .docx"
+            onChange={(e) => handleFileChange(e.target.files?.[0])}
+            style={{ display: "none" }}
+            ref={fileRef => fileRef?.click?.()}
           />
-        </label>
-        {error ? <ErrorBanner message={error} /> : null}
-        <button type="submit" className="primary" disabled={submitting}>
-          {submitting ? "Analyzing…" : "Analyze goal"}
-        </button>
-      </form>
+          <button
+            onClick={() => (fileRef.current?.click?.() || {})}
+            style={{
+              padding: "6px 12px",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              background: "transparent",
+              color: var(--text),
+              cursor: "pointer",
+            }}
+          >
+            + Add files
+          </button>
+          {selectedFile && (
+            <span style={{ marginLeft: 8, fontSize: 13 }}>
+              {selectedFile.name}
+              <button
+                onClick={() => setSelectedFile(null)}
+                style={{ padding: "0", background: "none", border: "none", color: "inherit", cursor: "pointer", title: "Remove" }}
+                >×</button>
+            </span>
+          )}
+          {selectedFile && (
+            <button
+              onClick={handleUploadDocument}
+              style={{
+                marginLeft: 8,
+                padding: "6px 12px",
+                border: "1px solid var(--accent)",
+                borderRadius: 8,
+                background: var(--accent),
+                color: white,
+                fontSize: 12,
+              }}
+            >
+              Upload
+            </button>
+          )}
+        </div>
+        {uploadedDocuments.length > 0 && (
+          <div style={{ marginTop: 8, fontSize: 12, color: var(--muted) }}>
+            Uploaded: {uploadedDocuments.length} document(s)
+            {uploadedDocuments.map((doc, i) => (
+              <span key={i} style={{ marginLeft: 12, fontSize: 12 }}>
+                {doc.filename} ({doc.chunks} chunks){" "}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
 
+/* --------------------------------------------------------------------------
+ * WorkflowPage – sophisticated workflow command center
+ * -------------------------------------------------------------------------- */
 function WorkflowPage({ workflowId }: { workflowId: string }) {
   const [workflow, setWorkflow] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -122,24 +381,16 @@ function WorkflowPage({ workflowId }: { workflowId: string }) {
     (async () => {
       try {
         const data = await getWorkflowRequest(workflowId);
-        if (!cancelled) {
-          setWorkflow(data);
-        }
+        if (!cancelled) setWorkflow(data);
       } catch (reason) {
-        if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : String(reason));
-        }
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [workflowId]);
 
   async function handleContinue() {
-    if (!workflow) {
-      return;
-    }
+    if (!workflow) return;
     setCompleting(true);
     setError(null);
     try {
@@ -164,331 +415,91 @@ function WorkflowPage({ workflowId }: { workflowId: string }) {
     );
   }
   if (!workflow) {
-    return <Loading />;
+    return <div className="skeleton" style={{ height: 200 }} />;
   }
 
   const tasks = workflow.tasks ?? [];
-  const pending = tasks.filter(
-    (task: any) => task.status !== "completed",
-  );
+  const pending = tasks.filter((task: any) => task.status !== "completed");
+
+  // Workflow stage order (matching backend architecture)
+  const stages = ["ANALYZE", "PLAN", "VALIDATE", "EXECUTE", "OPTIMIZE"];
+  const currentStage =
+    stages[Math.max(0, Math.min(stages.length - 1, workflow.current_state?.stageIndex ?? 0))];
 
   return (
-    <section className="page">
-      <div className="workflow-head">
-        <div>
-          <h1>{workflow.original_goal}</h1>
-          <span className="muted mono">{workflow.workflow_id}</span>
-        </div>
-        <button
-          type="button"
-          className="primary"
-          onClick={handleContinue}
-          disabled={completing || pending.length === 0}
-        >
-          {completing
-            ? "Updating…"
-            : pending.length === 0
-              ? "All tasks complete"
-              : "Continue workflow"}
-        </button>
-      </div>
+    <section className="page page-workflow">
+      {/* Top bar: breadcrumb + goal + continue */}
+      <div className="workflow-top">
+        <nav className="workflow-breadcrumb">
+          <span>Workflows</span>
+          <span>/</span>
+          <span>{workflow.original_goal?.substring(0, 40) || "—"}</span>
+        </nav>
 
-      {workflow.recommendation ? (
-        <div className="card recommendation-card">
-          <h2>
-            Recommended next action:{" "}
-            <code>{workflow.recommendation.action}</code>
-          </h2>
-          <p>{workflow.recommendation.reason}</p>
-          <div className="meta-row">
-            <span>
-              Affected task:{" "}
-              <code>{workflow.recommendation.affected_task ?? "—"}</code>
+        <h1 style={{ margin: "12px 0 8px", fontSize: 20 }}>
+          {workflow.original_goal || "—"}
+        </h1>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8 }}>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {workflow.workflow_id}
+          </span>
+          { /* Created time if available */ }
+          {workflow.updated_at && (
+            <span style={{ marginLeft: 8, fontSize: 12, color: var(--muted) }}>
+              updated {new Date(workflow.updated_at).toLocaleDateString()}
             </span>
-            <span>Priority: {workflow.recommendation.priority}</span>
-            <span>
-              Deadline pressure: {workflow.recommendation.deadline_pressure}
-            </span>
-          </div>
-        </div>
-      ) : null}
-
-      {workflow.current_state ? (
-        <div className="card">
-          <h3>Current state</h3>
-          <div className="meta-row">
-            <span>Status: {String(workflow.current_state.status ?? "—")}</span>
-            <span>Progress: {String(workflow.current_state.progress ?? 0)}%</span>
-          </div>
-        </div>
-      ) : null}
-
-      {workflow.optimization ? (
-        <div className="card">
-          <h3>Optimization</h3>
-          <p>{workflow.optimization.summary}</p>
-          <div className="meta-row">
-            <span>
-              Critical path:{" "}
-              <code>
-                {(workflow.optimization.critical_path ?? []).join(" → ") || "—"}
-              </code>
-            </span>
-            <span>
-              Effort: {workflow.optimization.critical_path_effort ?? 0} units
-            </span>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="card">
-        <h3>Plan</h3>
-        {workflow.plan_validation ? (
-          <div className="meta-row">
-            <span>
-              Validation:{" "}
-              {workflow.plan_validation.valid ? "valid" : "invalid"} -{" "}
-              {workflow.plan_validation.summary}
-            </span>
-            {workflow.plan_validation.errors?.length ? (
-              <span>Errors: {workflow.plan_validation.errors.length}</span>
-            ) : null}
-            {workflow.plan_validation.warnings?.length ? (
-              <span>Warnings: {workflow.plan_validation.warnings.length}</span>
-            ) : null}
-          </div>
-        ) : null}
-        <table className="task-table">
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Task</th>
-              <th>Effort</th>
-              <th>Dependencies</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tasks.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="muted">
-                  No tasks in the plan.
-                </td>
-              </tr>
-            ) : (
-              tasks.map((task: any) => (
-                <tr key={task.id}>
-                  <td>
-                    <span className={`status status-${task.status}`}>
-                      {task.status}
-                    </span>
-                  </td>
-                  <td>
-                    <code>{task.id}</code> {task.description}
-                  </td>
-                  <td>{task.effort}</td>
-                  <td className="muted">
-                    {(task.dependencies ?? []).join(", ") || "—"}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {workflow.detected_blockers?.length ? (
-        <div className="card">
-          <h3>Blockers</h3>
-          <ul className="plain-list">
-            {workflow.detected_blockers.map((blocker: any, index: number) => (
-              <li key={`${blocker.task_id ?? "blocker"}-${index}`}>
-                <code>{blocker.task_id || "plan"}</code>: {blocker.message}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {workflow.memory_context?.length ? (
-        <div className="card">
-          <h3>Memory context</h3>
-          <ul className="plain-list">
-            {workflow.memory_context.map((line: string, index: number) => (
-              <li key={`memory-${index}`}>{line}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function HistoryPage() {
-  const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await listWorkflowsRequest();
-        if (!cancelled) {
-          setWorkflows(data);
-        }
-      } catch (reason) {
-        if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : String(reason));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (error) {
-    return (
-      <section className="page">
-        <h1>History</h1>
-        <ErrorBanner message={error} />
-      </section>
-    );
-  }
-  if (!workflows) {
-    return <Loading />;
-  }
-
-  return (
-    <section className="page">
-      <h1>Workflow history</h1>
-      {workflows.length === 0 ? (
-        <div className="card muted">No workflows yet.</div>
-      ) : (
-        <table className="task-table">
-          <thead>
-            <tr>
-              <th>Workflow</th>
-              <th>Goal</th>
-              <th>Progress</th>
-              <th>Recommendation</th>
-            </tr>
-          </thead>
-          <tbody>
-            {workflows.map((workflow) => {
-              const progress =
-                workflow.total_tasks === 0
-                  ? 0
-                  : Math.round(
-                      (workflow.completed_tasks / workflow.total_tasks) * 100,
-                    );
-              return (
-                <tr
-                  key={workflow.workflow_id}
-                  onClick={() =>
-                    navigate(`workflow/${workflow.workflow_id}`)
-                  }
-                  className="clickable"
-                >
-                  <td>
-                    <code>{workflow.workflow_id}</code>
-                  </td>
-                  <td>{workflow.goal}</td>
-                  <td>
-                    {workflow.completed_tasks}/{workflow.total_tasks} ({progress}
-                    %)
-                  </td>
-                  <td className="muted">
-                    {workflow.recommendation_action ?? "—"}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </section>
-  );
-}
-
-function AboutPage() {
-  return (
-    <section className="page">
-      <h1>About</h1>
-      <div className="card">
-        <p>
-          This is an advisory AI workplace operations agent. It analyzes a work
-          request, extracts organizational requirements and procedures, builds
-          and validates an execution plan, detects blockers, and recommends the
-          next action.
-        </p>
-        <p>
-          The agent never executes actions automatically: every recommendation
-          is advisory and should be reviewed by people.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-export default function App() {
-  const route = useHashRoute();
-  const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const status = await checkBackendHealth();
-        if (!cancelled) {
-          setBackendStatus(status);
-        }
-      } catch {
-        if (!cancelled) {
-          setBackendStatus("error");
-        }
-      }
-    })();
-    const interval = setInterval(async () => {
-      try {
-        const status = await checkBackendHealth();
-        setBackendStatus(status);
-      } catch {
-        setBackendStatus("error");
-      }
-    }, 30000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-  const workflowMatch = matchRoute(route, "workflow/:id");
-  let content: React.ReactNode;
-  if (!route) {
-    content = <HomePage />;
-  } else if (route === "history") {
-    content = <HistoryPage />;
-  } else if (route === "about") {
-    content = <AboutPage />;
-  } else if (workflowMatch) {
-    content = <WorkflowPage workflowId={workflowMatch.params.id} />;
-  } else {
-    content = (
-      <section className="page">
-        <h1>Page not found</h1>
-        <div className="card">
-          The route <code>#{route}</code> does not exist.{" "}
-          <button type="button" onClick={() => navigate("")}>
-            Go to new request
+          )}
+          {/* Continue workflow primary action */}
+          <button
+            onClick={handleContinue}
+            className="primary"
+            disabled={completing || pending.length === 0}
+            style={{ fontSize: 13, padding: "6px 12px" }}
+          >
+            {completing ? "Updating…" : pending.length === 0 ? "All tasks complete" : "Continue workflow"}
           </button>
         </div>
-      </section>
-    );
-  }
+      </div>
 
-  return (
-    <Layout activeWorkflows={Boolean(workflowMatch)} backendStatus={backendStatus}>
-      {content}
-    </Layout>
-  );
+      {/* Horizontal workflow progress indicator */}
+      <div className="workflow-stages" style={{ margin: "16px 0", display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
+        {stages.map((stage, i) => {
+          const isCurrent = i === currentStage;
+          const isCompleted = i < (workflow.current_state?.stageIndex ?? 0);
+          return (
+            <div
+              key={stage}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 4,
+                color: isCompleted ? var(--good) : i <= currentStage ? var(--accent) : var(--muted),
+              }}
+            >
+              <span className="stage-number">{stage}</span>
+              <div
+                style={{
+                  width: 30,
+                  height: 4,
+                  background: isCompleted
+                    ? "var(--good)"
+                    : isCurrent
+                      ? "var(--accent)"
+                      : "var(--border)",
+                  borderRadius: 2,
+                  transition: "var(--transition-fast)",
+                  marginTop: 2,
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Main dashboard grid – two columns */}
+      <div className="dashboard-grid" style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 24, marginTop: 24 }}>
+        {/* LEFT COLUMN: Primary */ lever:primary
+  });
 }
