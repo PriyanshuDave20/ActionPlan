@@ -238,18 +238,13 @@ return ( <section className="page"> <div className="workflow-head"> <div> <h1>{w
       <div className="meta-row">
         <span>
           Affected task:{" "}
-          <code>
-            {workflow.recommendation.affected_task ?? "—"}
-          </code>
+          <code>{workflow.recommendation.affected_task ?? "—"}</code>
         </span>
 
-        <span>
-          Priority: {workflow.recommendation.priority}
-        </span>
+        <span>Priority: {workflow.recommendation.priority}</span>
 
         <span>
-          Deadline pressure:{" "}
-          {workflow.recommendation.deadline_pressure}
+          Deadline pressure: {workflow.recommendation.deadline_pressure}
         </span>
       </div>
     </div>
@@ -265,8 +260,7 @@ return ( <section className="page"> <div className="workflow-head"> <div> <h1>{w
         </span>
 
         <span>
-          Progress:{" "}
-          {String(workflow.current_state.progress ?? 0)}%
+          Progress: {String(workflow.current_state.progress ?? 0)}%
         </span>
       </div>
     </div>
@@ -282,15 +276,13 @@ return ( <section className="page"> <div className="workflow-head"> <div> <h1>{w
         <span>
           Critical path:{" "}
           <code>
-            {(workflow.optimization.critical_path ?? []).join(
-              " → ",
-            ) || "—"}
+            {(workflow.optimization.critical_path ?? []).join(" → ") ||
+              "—"}
           </code>
         </span>
 
         <span>
-          Effort:{" "}
-          {workflow.optimization.critical_path_effort ?? 0} units
+          Effort: {workflow.optimization.critical_path_effort ?? 0} units
         </span>
       </div>
     </div>
@@ -303,10 +295,8 @@ return ( <section className="page"> <div className="workflow-head"> <div> <h1>{w
       <div className="meta-row">
         <span>
           Validation:{" "}
-          {workflow.plan_validation.valid
-            ? "valid"
-            : "invalid"}{" "}
-          - {workflow.plan_validation.summary}
+          {workflow.plan_validation.valid ? "valid" : "invalid"} -{" "}
+          {workflow.plan_validation.summary}
         </span>
 
         {workflow.plan_validation.errors?.length ? (
@@ -317,8 +307,7 @@ return ( <section className="page"> <div className="workflow-head"> <div> <h1>{w
 
         {workflow.plan_validation.warnings?.length ? (
           <span>
-            Warnings:{" "}
-            {workflow.plan_validation.warnings.length}
+            Warnings: {workflow.plan_validation.warnings.length}
           </span>
         ) : null}
       </div>
@@ -351,8 +340,7 @@ return ( <section className="page"> <div className="workflow-head"> <div> <h1>{w
               </td>
 
               <td>
-                <code>{task.id}</code>{" "}
-                {task.description}
+                <code>{task.id}</code> {task.description}
               </td>
 
               <td>{task.effort}</td>
@@ -374,11 +362,8 @@ return ( <section className="page"> <div className="workflow-head"> <div> <h1>{w
       <ul className="plain-list">
         {workflow.detected_blockers.map(
           (blocker: any, index: number) => (
-            <li
-              key={`${blocker.task_id ?? "blocker"}-${index}`}
-            >
-              <code>{blocker.task_id || "plan"}</code>:{" "}
-              {blocker.message}
+            <li key={`${blocker.task_id ?? "blocker"}-${index}`}>
+              <code>{blocker.task_id || "plan"}</code>: {blocker.message}
             </li>
           ),
         )}
@@ -469,18 +454,14 @@ return ( <section className="page"> <h1>Workflow history</h1>
             workflow.total_tasks === 0
               ? 0
               : Math.round(
-                  (workflow.completed_tasks /
-                    workflow.total_tasks) *
-                    100,
+                  (workflow.completed_tasks / workflow.total_tasks) * 100,
                 );
 
           return (
             <tr
               key={workflow.workflow_id}
               onClick={() =>
-                navigate(
-                  `workflow/${workflow.workflow_id}`,
-                )
+                navigate(`workflow/${workflow.workflow_id}`)
               }
               className="clickable"
             >
@@ -491,8 +472,8 @@ return ( <section className="page"> <h1>Workflow history</h1>
               <td>{workflow.goal}</td>
 
               <td>
-                {workflow.completed_tasks}/
-                {workflow.total_tasks} ({progress}%)
+                {workflow.completed_tasks}/{workflow.total_tasks} (
+                {progress}%)
               </td>
 
               <td className="muted">
@@ -516,17 +497,15 @@ return ( <section className="page"> <h1>About</h1>
 ```
   <div className="card">
     <p>
-      This is an advisory AI workplace operations agent. It
-      analyzes a work request, extracts organizational
-      requirements and procedures, builds and validates an
-      execution plan, detects blockers, and recommends the next
-      action.
+      This is an advisory AI workplace operations agent. It analyzes a
+      work request, extracts organizational requirements and procedures,
+      builds and validates an execution plan, detects blockers, and
+      recommends the next action.
     </p>
 
     <p>
-      The agent never executes actions automatically: every
-      recommendation is advisory and should be reviewed by
-      people.
+      The agent never executes actions automatically: every recommendation
+      is advisory and should be reviewed by people.
     </p>
   </div>
 </section>
