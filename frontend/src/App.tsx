@@ -20,10 +20,13 @@ children: React.ReactNode;
 activeWorkflows?: boolean;
 backendStatus?: BackendStatus;
 }) {
-return ( <div className="app-shell"> <header className="topbar"> <a className="brand" href="#/">
-Workplace Operations Agent </a>
+return (
+<div className="app-shell">
+<header className="topbar">
+<a className="brand" href="#/">
+Workplace Operations Agent
+</a>
 
-```
     <nav className="nav">
       <button type="button" onClick={() => navigate("")}>
         New Request
@@ -60,7 +63,6 @@ Workplace Operations Agent </a>
     executed.
   </footer>
 </div>
-```
 
 );
 }
@@ -81,7 +83,6 @@ const [error, setError] = useState<string | null>(null);
 async function handleSubmit(event: React.FormEvent) {
 event.preventDefault();
 
-```
 if (!goal.trim()) {
   return;
 }
@@ -99,13 +100,13 @@ try {
   setError(reason instanceof Error ? reason.message : String(reason));
   setSubmitting(false);
 }
-```
 
 }
 
-return ( <section className="page"> <h1>Create an action plan</h1>
+return (
+<section className="page">
+<h1>Create an action plan</h1>
 
-```
   <p className="lede">
     Describe the work you need done. The agent will analyze the objective,
     extract requirements, plan and validate an execution order, and
@@ -132,7 +133,6 @@ return ( <section className="page"> <h1>Create an action plan</h1>
     </button>
   </form>
 </section>
-```
 
 );
 }
@@ -145,7 +145,6 @@ const [completing, setCompleting] = useState(false);
 useEffect(() => {
 let cancelled = false;
 
-```
 (async () => {
   try {
     const data = await getWorkflowRequest(workflowId);
@@ -165,7 +164,6 @@ let cancelled = false;
 return () => {
   cancelled = true;
 };
-```
 
 }, [workflowId]);
 
@@ -174,7 +172,6 @@ if (!workflow) {
 return;
 }
 
-```
 setCompleting(true);
 setError(null);
 
@@ -190,12 +187,15 @@ try {
   setError(reason instanceof Error ? reason.message : String(reason));
   setCompleting(false);
 }
-```
 
 }
 
 if (error) {
-return ( <section className="page"> <h1>Workflow</h1> <ErrorBanner message={error} /> </section>
+return (
+<section className="page">
+<h1>Workflow</h1>
+<ErrorBanner message={error} />
+</section>
 );
 }
 
@@ -209,9 +209,14 @@ const pending = tasks.filter(
 (task: any) => task.status !== "completed",
 );
 
-return ( <section className="page"> <div className="workflow-head"> <div> <h1>{workflow.original_goal}</h1> <span className="muted mono">{workflow.workflow_id}</span> </div>
+return (
+<section className="page">
+<div className="workflow-head">
+<div>
+<h1>{workflow.original_goal}</h1>
+<span className="muted mono">{workflow.workflow_id}</span>
+</div>
 
-```
     <button
       type="button"
       className="primary"
@@ -385,7 +390,6 @@ return ( <section className="page"> <div className="workflow-head"> <div> <h1>{w
     </div>
   ) : null}
 </section>
-```
 
 );
 }
@@ -399,7 +403,6 @@ const [error, setError] = useState<string | null>(null);
 useEffect(() => {
 let cancelled = false;
 
-```
 (async () => {
   try {
     const data = await listWorkflowsRequest();
@@ -419,12 +422,15 @@ let cancelled = false;
 return () => {
   cancelled = true;
 };
-```
 
 }, []);
 
 if (error) {
-return ( <section className="page"> <h1>History</h1> <ErrorBanner message={error} /> </section>
+return (
+<section className="page">
+<h1>History</h1>
+<ErrorBanner message={error} />
+</section>
 );
 }
 
@@ -432,9 +438,10 @@ if (!workflows) {
 return <Loading />;
 }
 
-return ( <section className="page"> <h1>Workflow history</h1>
+return (
+<section className="page">
+<h1>Workflow history</h1>
 
-```
   {workflows.length === 0 ? (
     <div className="card muted">No workflows yet.</div>
   ) : (
@@ -486,15 +493,15 @@ return ( <section className="page"> <h1>Workflow history</h1>
     </table>
   )}
 </section>
-```
 
 );
 }
 
 function AboutPage() {
-return ( <section className="page"> <h1>About</h1>
+return (
+<section className="page">
+<h1>About</h1>
 
-```
   <div className="card">
     <p>
       This is an advisory AI workplace operations agent. It analyzes a
@@ -509,7 +516,6 @@ return ( <section className="page"> <h1>About</h1>
     </p>
   </div>
 </section>
-```
 
 );
 }
@@ -523,7 +529,6 @@ useState<BackendStatus>("checking");
 useEffect(() => {
 let cancelled = false;
 
-```
 (async () => {
   try {
     const status = await checkBackendHealth();
@@ -551,11 +556,10 @@ return () => {
   cancelled = true;
   clearInterval(interval);
 };
-```
 
 }, []);
 
-const workflowMatch = matchRoute(route, "workflow/:id");
+const workflowMatch = matchRoute(route, "workflow/");
 
 let content: React.ReactNode;
 
@@ -566,12 +570,14 @@ content = <HistoryPage />;
 } else if (route === "about") {
 content = <AboutPage />;
 } else if (workflowMatch) {
-content = ( <WorkflowPage workflowId={workflowMatch.params.id} />
+content = (
+<WorkflowPage workflowId={workflowMatch.params.id} />
 );
 } else {
-content = ( <section className="page"> <h1>Page not found</h1>
+content = (
+<section className="page">
+<h1>Page not found</h1>
 
-```
     <div className="card">
       The route <code>#{route}</code> does not exist.{" "}
       <button type="button" onClick={() => navigate("")}>
@@ -580,14 +586,12 @@ content = ( <section className="page"> <h1>Page not found</h1>
     </div>
   </section>
 );
-```
 
 }
 
-return ( <Layout
-   activeWorkflows={Boolean(workflowMatch)}
-   backendStatus={backendStatus}
- >
-{content} </Layout>
+return (
+<Layout activeWorkflows={Boolean(workflowMatch)} backendStatus={backendStatus} >
+{content}
+</Layout>
 );
 }
