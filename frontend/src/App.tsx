@@ -320,7 +320,9 @@ function WorkflowPage({ workflowId }: { workflowId: string }) {
         </div>
       ) : null}
     </section>
-  );
+  }
+
+  ;
 }
 
 function HistoryPage() {
@@ -405,7 +407,7 @@ function HistoryPage() {
             })}
           </tbody>
         </table>
-      </section>
+      )}
     </section>
   );
 }
