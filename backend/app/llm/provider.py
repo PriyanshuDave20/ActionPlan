@@ -455,9 +455,11 @@ def create_llm_provider(settings: Settings) -> LLMProvider:
             # ``extra_body`` is merged verbatim into the JSON request body by
             # the OpenAI SDK, so the wire payload keeps the standard
             # ``max_tokens`` field.
-            "extra_body": {"max_tokens": MAX_OUTPUT_TOKENS},
+            "extra_body": {
+                "max_tokens": MAX_OUTPUT_TOKENS,
                 "chat_template_kwargs": {
-                "enable_thinking": False
+                    "enable_thinking": False
+                },
             },
         }
 
