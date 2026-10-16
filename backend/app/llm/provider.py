@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Protocol
+from typing import Any, Protocol
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, ValidationError
@@ -12,6 +12,12 @@ from app.models.work_request import WorkRequest
 
 
 logger = logging.getLogger(__name__)
+
+# Upper bound on tokens generated for any single structured-output call.
+# The schemas used by this agent produce at most a few hundred tokens, so
+# this only ever truncates runaway output (e.g. a model looping on the
+# schema) instead of constraining legitimate answers.
+MAX_OUTPUT_TOKENS = 2048
 
 
 class LLMProvider(Protocol):
@@ -122,15 +128,202 @@ class MockLLMProvider:
         )
 
 
-def _clean_json_response(content: str) -> str:
-    content = content.strip()
-    if content.startswith("```json"):
-        content = content[7:]
-    elif content.startswith("```"):
-        content = content[3:]
-    if content.endswith("```"):
-        content = content[:-3]
-    return content.strip()
+_SCHEMA_NOISE_KEYS = frozenset(
+    {"title", "description", "default", "minLength", "maxLength", "minimum", "maximum"}
+)
+
+
+def _extract_json(content: str) -> str:
+    """Extract the first balanced JSON object (or array) from model output.
+
+    Tolerates Markdown code fences, prose around the JSON, and stray
+    characters before or after the JSON document. The returned substring
+    is guaranteed balanced with respect to braces/brackets inside strings.
+    """
+    if not content:
+        raise json.JSONDecodeError("empty model response", content, 0)
+
+    text = content.strip()
+    if text.startswith("```"):
+        newline = text.find("\n")
+        if newline != -1:
+            text = text[newline + 1 :]
+        if text.endswith("```"):
+            text = text[: -len("```")].strip()
+
+    start = text.find("{")
+    if start == -1:
+        start = text.find("[")
+    if start == -1:
+        raise json.JSONDecodeError(
+            "model response contains no JSON object or array", content, 0
+        )
+
+    open_char = text[start]
+    close_char = "}" if open_char == "{" else "]"
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == open_char:
+            depth += 1
+        elif char == close_char:
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    raise json.JSONDecodeError("unbalanced JSON in model response", content, start)
+
+
+def _trim_schema(node: Any) -> Any:
+    """Return the JSON schema without prompt-bloating and echo-baiting noise.
+
+    ``model_json_schema()`` is verbose: every field carries ``title``,
+    ``description``, ``default``, and length constraints that do nothing but
+    enlarge the prompt and encourage small models to echo the schema instead
+    of producing data. We drop those keys and keep structure, types, enums,
+    ``$defs`` and ``required``.
+
+    Keys are only stripped at the schema level, never inside a ``properties``
+    map, because a *field* may legitimately be named ``description`` or
+    ``title`` (``ProcedureOption.description`` is one such required field).
+    """
+    if isinstance(node, dict):
+        result: dict[str, Any] = {}
+        for key, value in node.items():
+            if key == "properties" and isinstance(value, dict):
+                result[key] = {
+                    field_name: _trim_schema(field_schema)
+                    for field_name, field_schema in value.items()
+                }
+            elif key not in _SCHEMA_NOISE_KEYS:
+                result[key] = _trim_schema(value)
+        return result
+    if isinstance(node, list):
+        return [_trim_schema(item) for item in node]
+    return node
+
+
+def _example_value(
+    node: dict, defs: dict, depth: int = 0, seen: frozenset[str] = frozenset()
+) -> Any:
+    """Build a small, structurally valid example object from a JSON schema.
+
+    The example teaches the model the expected nesting and shape so it
+    produces data rather than echoing the schema. Arrays get one sample
+    element so nested objects are illustrated. ``seen`` guards against
+    self-referential schemas.
+    """
+    if depth > 12:
+        return {}
+    if "$ref" in node:
+        name = node["$ref"].rsplit("/", 1)[-1]
+        if name in seen:
+            return {}
+        return _example_value(defs.get(name, {}), defs, depth + 1, seen | {name})
+    if "anyOf" in node:
+        alternatives = [alt for alt in node.get("anyOf", []) if alt.get("type") != "null"]
+        if alternatives:
+            return _example_value(alternatives[0], defs, depth, seen)
+    node_type = node.get("type")
+    if node_type == "object":
+        return {
+            name: _example_value(child, defs, depth + 1, seen)
+            for name, child in (node.get("properties") or {}).items()
+        }
+    if node_type == "array":
+        items = node.get("items") or {}
+        return [_example_value(items, defs, depth + 1, seen)]
+    if node_type == "boolean":
+        return True
+    if node_type == "integer" or node_type == "number":
+        return 1
+    if node.get("enum"):
+        return node["enum"][0]
+    return "example"
+
+
+def _build_instruction(schema: type[BaseModel]) -> str:
+    schema_node = _trim_schema(schema.model_json_schema())
+    schema_json = json.dumps(schema_node, indent=2)
+    example_json = json.dumps(
+        _example_value(schema_node, schema_node.get("$defs", {})), indent=2
+    )
+    return (
+        "You are a precise senior workplace operations planner.\n"
+        "\n"
+        "Respond with ONE JSON object that holds REAL DATA about the scenario.\n"
+        "\n"
+        "SCHEMA (field structure only - do NOT copy the schema itself):\n"
+        f"{schema_json}\n"
+        "\n"
+        "EXAMPLE of a valid POPULATED response (keep this shape, fill with real content):\n"
+        f"{example_json}\n"
+        "\n"
+        "HARD RULES:\n"
+        "- Your entire reply is a single JSON object starting with '{' and ending with '}'.\n"
+        "- Return the POPULATED data. Never output a schema. Never include the words\n"
+        "  'schema', '$defs', 'properties', 'required', or 'title' inside the JSON.\n"
+        "- Do not use Markdown code fences, comments, or any text outside the JSON.\n"
+        "- Use empty lists for fields where no items are known.\n"
+    )
+
+
+class SchemaEchoError(ValueError):
+    """The model returned a JSON Schema document instead of populated data."""
+
+
+# Keys that only ever appear in a JSON Schema document, never in a populated
+# instance of the response models this agent uses.
+_SCHEMA_ONLY_KEYS = frozenset(
+    {"$defs", "definitions", "$schema", "properties", "type", "additionalProperties"}
+)
+
+
+def _reject_schema_echo(parsed: object, schema: type[BaseModel]) -> None:
+    """Fail fast when the model echoes the schema instead of returning data.
+
+    Models whose fields are all optional (``RequirementExtraction``) would
+    otherwise *accept* a schema echo as a valid but empty object, silently
+    producing zero requirements/tasks with no error. Pydantic ignores extra
+    keys by default, so explicit detection is required.
+    """
+    if not isinstance(parsed, dict):
+        return
+    field_names = set(schema.model_fields)
+    echoed = _SCHEMA_ONLY_KEYS & set(parsed)
+    if echoed and not (set(parsed) & field_names):
+        raise SchemaEchoError(
+            "model returned a JSON schema (keys: "
+            + ", ".join(sorted(echoed))
+            + ") instead of populated data"
+        )
+
+
+def _error_summary(error: Exception) -> str:
+    """Return a safe, one-line description of a parse/validation failure.
+
+    Pydantic ``ValidationError`` may embed the offending (possibly user-echoed)
+    ``input``; we deliberately exclude input values and schema URLs so no
+    sensitive content or credentials are ever logged.
+    """
+    if isinstance(error, ValidationError):
+        parts = []
+        for item in error.errors(include_input=False, include_url=False):
+            location = ".".join(str(part) for part in item.get("loc", ()))
+            parts.append(f"{location}: {item.get('msg', str(item.get('type', '')))}")
+        return "[validation error] " + ("; ".join(parts) or str(error))
+    return f"[{type(error).__name__}] {error}"
 
 
 class LangChainStructuredProvider:
@@ -147,37 +340,54 @@ class LangChainStructuredProvider:
         content = response.content
         if isinstance(content, str):
             return content
-        return "".join(str(part) for part in content)
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+            else:
+                parts.append(str(part))
+        return "".join(parts)
 
     def chat_json(self, prompt: str, schema: type[BaseModel], retries: int = 2) -> BaseModel:
-        schema_json = json.dumps(schema.model_json_schema(), indent=2)
-        instruction = f"""
-You are an advisory workplace operations planner.
-
-Return ONLY valid JSON that conforms exactly to this schema:
-
-{schema_json}
-
-Rules:
-- Return JSON only.
-- Do not wrap the JSON in Markdown code fences.
-- Do not include explanations outside the JSON.
-- Prefer conservative effort estimates using one of the allowed values.
-"""
+        instruction = _build_instruction(schema)
         last_error: Exception | None = None
+
         for attempt in range(retries + 1):
             raw = self.chat(instruction + "\n\n" + prompt)
             try:
-                parsed = json.loads(_clean_json_response(raw))
+                parsed = json.loads(_extract_json(raw))
+                _reject_schema_echo(parsed, schema)
                 return schema.model_validate(parsed)
-            except (json.JSONDecodeError, ValidationError) as error:
+            except (json.JSONDecodeError, ValidationError, SchemaEchoError) as error:
                 last_error = error
-                logger.warning("LLM JSON parse/validation failed (attempt %s)", attempt + 1)
-        raise RuntimeError(f"LLM returned invalid structured output: {last_error}")
+                summary = _error_summary(error)
+                logger.warning(
+                    "LLM JSON parse/validation failed (schema=%s attempt=%s/%s): %s",
+                    schema.__name__,
+                    attempt + 1,
+                    retries + 1,
+                    summary,
+                )
+                instruction = (
+                    instruction
+                    + "\nYour previous response was rejected:\n"
+                    + summary
+                    + "\n\nSend ONLY a corrected JSON object now. Start it with '{' and end it "
+                    "with '}'. Include every field named in the SCHEMA above with real content "
+                    "for this scenario. Do NOT output a schema, and do NOT return an empty "
+                    "object or empty lists unless there is genuinely nothing to report."
+                )
+
+        raise RuntimeError(f"LLM returned invalid structured output: {_error_summary(last_error)}")
 
     def analyze_objective(self, work_request: WorkRequest) -> ObjectiveAnalysis:
         result = self.chat_json(
-            f"Work request:\n{work_request.model_dump_json(indent=2)}",
+            "Work request (populate the ObjectiveAnalysis for this scenario):\n"
+            f"{work_request.model_dump_json()}\n"
+            "Analyze the objective, current situation, dependencies, timeline "
+            "and priority of the work described above.",
             ObjectiveAnalysis,
         )
         if not isinstance(result, ObjectiveAnalysis):
@@ -186,7 +396,8 @@ Rules:
 
     def extract_procedures(self, work_request: WorkRequest) -> ProcedureExtraction:
         result = self.chat_json(
-            f"Work request:\n{work_request.model_dump_json(indent=2)}\n"
+            "Work request (populate the ProcedureExtraction for this scenario):\n"
+            f"{work_request.model_dump_json()}\n"
             "Identify organizational procedures that apply to this work. "
             "If none are known, return an empty procedures list.",
             ProcedureExtraction,
@@ -197,7 +408,8 @@ Rules:
 
     def extract_requirements(self, work_request: WorkRequest) -> RequirementExtraction:
         result = self.chat_json(
-            f"Work request:\n{work_request.model_dump_json(indent=2)}\n"
+            "Work request (populate the RequirementExtraction for this scenario):\n"
+            f"{work_request.model_dump_json()}\n"
             "Extract the organizational requirements (process, policy, "
             "approval, evidence) that this work must satisfy. Use stable "
             "requirement IDs such as req_1, req_2.",
@@ -232,6 +444,18 @@ def create_llm_provider(settings: Settings) -> LLMProvider:
             "temperature": 0,
             "timeout": 120,
             "max_retries": 0,
+            # Cap generation so a confused model cannot ramble for tens of
+            # seconds (and blow past the Lambda timeout) echoing the schema.
+            # These structured outputs need at most a few hundred tokens.
+            #
+            # NOTE: this must be sent via ``extra_body``. langchain-openai
+            # 0.3.x unconditionally rewrites a top-level ``max_tokens`` into
+            # ``max_completion_tokens`` (see ChatOpenAI._default_params), a
+            # parameter NVIDIA's OpenAI-compatible endpoint does not accept.
+            # ``extra_body`` is merged verbatim into the JSON request body by
+            # the OpenAI SDK, so the wire payload keeps the standard
+            # ``max_tokens`` field.
+            "extra_body": {"max_tokens": MAX_OUTPUT_TOKENS},
         }
 
         llm = ChatOpenAI(**llm_kwargs)

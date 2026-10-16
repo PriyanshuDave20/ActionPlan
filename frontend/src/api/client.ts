@@ -5,8 +5,10 @@ import type {
   WorkflowSummary,
 } from "./workflow-types";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL;
+// Local Vite development can run without a frontend/.env file. Keep the
+// default aligned with backend/scripts/run_api.py while allowing deployments
+// to provide their own API URL at build time.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 
 export type BackendStatus = "checking" | "active" | "inactive" | "error";
 
@@ -51,7 +53,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${API_BASE_URL}${path}`, init);
   } catch {
-    throw new ApiError(0, "Cannot reach the backend at ${API_BASE_URL}. Is the API running?", "network");
+    throw new ApiError(0, `Cannot reach the backend at ${API_BASE_URL}. Is the API running?`, "network");
   }
   if (!response.ok) {
     let detail = `Request failed with status ${response.status}`;
