@@ -79,7 +79,11 @@ return <div className="card error-card">Error: {message}</div>;
 
 function HomePage() {
 const [goal, setGoal] = useState("");
+const [files, setFiles] = useState<File[]>([]);
+const [uploadedFiles, setUploadedFiles] = useState<string[]>([]);
+const [createdWorkflowId, setCreatedWorkflowId] = useState<string | null>(null);
 const [submitting, setSubmitting] = useState(false);
+const [progress, setProgress] = useState("");
 const [error, setError] = useState<string | null>(null);
 
 async function handleSubmit(event: React.FormEvent) {
@@ -93,14 +97,32 @@ setSubmitting(true);
 setError(null);
 
 try {
-  const workflow = await createGoalRequest({
-    goal: goal.trim(),
-  });
+  let workflowId = createdWorkflowId;
+  if (!workflowId) {
+    setProgress("Building your project plan…");
+    const workflow = await createGoalRequest({ goal: goal.trim() });
+    workflowId = workflow.workflow_id;
+    setCreatedWorkflowId(workflowId);
+  }
 
-  window.location.hash = `#/workflow/${workflow.workflow_id}`;
+  const remainingFiles = files.filter((file) => !uploadedFiles.includes(file.name));
+  for (let index = 0; index < remainingFiles.length; index += 1) {
+    const file = remainingFiles[index];
+    setProgress(`Adding document ${index + 1} of ${remainingFiles.length}…`);
+    await ingestDocumentRequest(file, workflowId);
+    setUploadedFiles((current) => [...current, file.name]);
+  }
+
+  if (remainingFiles.length > 0) {
+    setProgress("Updating the plan with your documents…");
+    await refreshWorkflowRequest(workflowId);
+  }
+  window.location.hash = `#/workflow/${workflowId}`;
 } catch (reason) {
   setError(reason instanceof Error ? reason.message : String(reason));
+} finally {
   setSubmitting(false);
+  setProgress("");
 }
 
 }
@@ -125,15 +147,50 @@ return (
         onChange={(event) => setGoal(event.target.value)}
       placeholder="e.g. Prepare Project Alpha for production by coordinating launch readiness, approvals, and team handoffs."
         rows={4}
+        disabled={submitting || Boolean(createdWorkflowId)}
         required
       />
     </label>
 
+    <div className="initial-documents">
+      <div>
+        <span className="field-title">Project documents <span className="optional-label">Optional</span></span>
+        <p className="muted">Add policies, briefs, or reference files now. They’ll be ingested before your project opens.</p>
+      </div>
+      <label className={`button secondary initial-upload ${submitting ? "disabled" : ""}`}>
+        <span aria-hidden="true">＋</span> Choose files
+        <input
+          type="file"
+          accept=".pdf,.txt,.md,.csv"
+          multiple
+          disabled={submitting || Boolean(createdWorkflowId)}
+          onChange={(event) => {
+            const additions = Array.from(event.currentTarget.files ?? []);
+            setFiles((current) => [...current, ...additions.filter((file) => !current.some((existing) => existing.name === file.name))]);
+            event.currentTarget.value = "";
+          }}
+        />
+      </label>
+      {files.length > 0 ? (
+        <ul className="selected-files">
+          {files.map((file) => (
+            <li key={file.name}>
+              <span className="file-mark">DOC</span>
+              <span className="file-name">{file.name}</span>
+              {uploadedFiles.includes(file.name) ? <span className="file-ready">Added</span> : null}
+              {!submitting && !createdWorkflowId ? <button type="button" aria-label={`Remove ${file.name}`} onClick={() => setFiles((current) => current.filter((item) => item.name !== file.name))}>×</button> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+
     {error ? <ErrorBanner message={error} /> : null}
 
     <button type="submit" className="primary" disabled={submitting}>
-      {submitting ? "Building your project…" : "Create project →"}
+      {submitting ? (progress || "Creating project…") : createdWorkflowId ? "Retry document setup" : "Create project →"}
     </button>
+    {createdWorkflowId && error ? <button type="button" className="button secondary" onClick={() => { window.location.hash = `#/workflow/${createdWorkflowId}`; }}>Open project anyway</button> : null}
   </form>
 </section>
 
@@ -144,7 +201,6 @@ function WorkflowPage({ workflowId }: { workflowId: string }) {
 const [workflow, setWorkflow] = useState<any>(null);
 const [error, setError] = useState<string | null>(null);
 const [completing, setCompleting] = useState(false);
-const [uploading, setUploading] = useState(false);
 const [documents, setDocuments] = useState<string[]>([]);
 
 useEffect(() => {
@@ -194,27 +250,6 @@ try {
 }
 }
 
-async function handleDocumentUpload(event: React.ChangeEvent<HTMLInputElement>) {
-  const files = Array.from(event.target.files ?? []);
-  if (!files.length) return;
-  setUploading(true);
-  setError(null);
-  try {
-    for (const file of files) {
-      const result = await ingestDocumentRequest(file, workflowId);
-      setDocuments((current) => current.includes(result.filename) ? current : [...current, result.filename]);
-    }
-    const refreshed = await refreshWorkflowRequest(workflowId);
-    setWorkflow(refreshed);
-    setDocuments(refreshed.execution_metadata?.documents ?? []);
-  } catch (reason) {
-    setError(reason instanceof Error ? reason.message : String(reason));
-  } finally {
-    setUploading(false);
-    event.target.value = "";
-  }
-}
-
 if (error) {
 return (
 <section className="page">
@@ -261,12 +296,8 @@ return (
   <div className="card documents-card">
     <div className="section-title-row">
       <div><p className="eyebrow">PROJECT KNOWLEDGE</p><h2>Documents</h2></div>
-      <label className={`button secondary upload-button ${uploading ? "disabled" : ""}`}>
-        {uploading ? "Ingesting and updating…" : "＋ Add documents"}
-        <input type="file" accept=".pdf,.txt,.md,.csv" multiple disabled={uploading} onChange={handleDocumentUpload} />
-      </label>
     </div>
-    <p className="muted">Add project files to ground the plan in your own policies and materials. The plan refreshes after ingestion.</p>
+    <p className="muted">Reference files added during project setup.</p>
     {documents.length ? <ul className="document-list">{documents.map((name) => <li key={name}><span className="document-icon">↳</span>{name}</li>)}</ul> : <p className="empty-inline">No documents added yet.</p>}
   </div>
   {error ? <ErrorBanner message={error} /> : null}

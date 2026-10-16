@@ -781,6 +781,19 @@ button.primary:disabled { opacity: .65; cursor: wait; }
 .section-title-row h2 { margin: 0; font-size: 20px; }
 .section-title-row .eyebrow { margin-bottom: 5px; }
 .documents-card { margin: 22px 0; }
+.initial-documents { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px; padding: 18px; border: 1px solid #e3eaf3; border-radius: 12px; background: #f9fbfe; }
+.field-title { display: block; color: #34465e; font-size: 13px; font-weight: 700; }
+.optional-label { margin-left: 6px; color: #8b98a9; font-size: 11px; font-weight: 500; }
+.initial-documents p { margin: 5px 0 0; font-size: 12px; }
+.initial-upload { position: relative; display: inline-flex; align-items: center; gap: 7px; overflow: hidden; }
+.initial-upload input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.selected-files { grid-column: 1 / -1; display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.selected-files li { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; border: 1px solid #e5ebf3; border-radius: 9px; background: #fff; }
+.file-mark { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 30px; border-radius: 8px; background: #edf2ff; color: #416fc4; font-size: 8px; font-weight: 800; letter-spacing: .04em; }
+.file-name { overflow: hidden; color: #4c5f78; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.file-ready { margin-left: auto; color: #208158; font-size: 11px; }
+.selected-files li button { margin-left: auto; border: 0; background: transparent; color: #8290a3; font-size: 20px; cursor: pointer; }
+.selected-files li .file-ready + button { margin-left: 0; }
 .documents-card > .muted { margin: 9px 0 16px; }
 .upload-button { position: relative; display: inline-flex; align-items: center; white-space: nowrap; overflow: hidden; }
 .upload-button input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
@@ -815,6 +828,8 @@ button.primary:disabled { opacity: .65; cursor: wait; }
   .content { width: min(100% - 28px, 1060px); padding-top: 36px; }
   .workflow-head, .section-title-row { flex-direction: column; align-items: stretch; }
   .workflow-head .primary, .upload-button { width: 100%; justify-content: center; }
+  .initial-documents { grid-template-columns: 1fr; }
+  .initial-upload { justify-content: center; }
   .card { padding: 19px; }
   .task-table { display: block; overflow-x: auto; white-space: nowrap; }
 }
