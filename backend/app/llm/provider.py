@@ -442,7 +442,7 @@ def create_llm_provider(settings: Settings) -> LLMProvider:
             "api_key": api_key,
             "base_url": base_url,
             "temperature": 0,
-            "timeout": 120,
+            "timeout": 900,
             "max_retries": 0,
             # Cap generation so a confused model cannot ramble for tens of
             # seconds (and blow past the Lambda timeout) echoing the schema.
