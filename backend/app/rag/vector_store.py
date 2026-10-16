@@ -14,6 +14,7 @@ class VectorStore(Protocol):
         self,
         embedding: list[float],
         limit: int = 5,
+        workflow_id: str | None = None,
     ) -> list[Evidence]:
         ...
 
@@ -36,10 +37,13 @@ class InMemoryVectorStore:
             {"embedding": embedding, "content": content, "metadata": metadata}
         )
 
-    def search(self, embedding: list[float], limit: int = 5) -> list[Evidence]:
+    def search(self, embedding: list[float], limit: int = 5, workflow_id: str | None = None) -> list[Evidence]:
         scored = [
             (_cosine_similarity(embedding, record["embedding"]), record)
             for record in self.records
+            if workflow_id is None
+            or str(record["metadata"].get("source", "")).startswith(f"{workflow_id}::")
+            or "::" not in str(record["metadata"].get("source", ""))
         ]
         scored.sort(key=lambda item: item[0], reverse=True)
         return [
@@ -82,10 +86,13 @@ class LocalVectorStore:
         )
         self._persist()
 
-    def search(self, embedding: list[float], limit: int = 5) -> list[Evidence]:
+    def search(self, embedding: list[float], limit: int = 5, workflow_id: str | None = None) -> list[Evidence]:
         scored = [
             (_cosine_similarity(embedding, record["embedding"]), record)
             for record in self.records
+            if workflow_id is None
+            or str(record["metadata"].get("source", "")).startswith(f"{workflow_id}::")
+            or "::" not in str(record["metadata"].get("source", ""))
         ]
         scored.sort(key=lambda item: item[0], reverse=True)
         return [
@@ -99,6 +106,8 @@ class VectorRetriever:
         self.store = store
         self.embeddings = embeddings
 
-    def retrieve(self, query: str, limit: int = 5) -> list[Evidence]:
+    def retrieve(self, query: str, limit: int = 5, workflow_id: str | None = None) -> list[Evidence]:
         embedding = self.embeddings.embed([query])[0]
-        return self.store.search(embedding, limit=limit)
+        if workflow_id is None:
+            return self.store.search(embedding, limit=limit)
+        return self.store.search(embedding, limit=limit, workflow_id=workflow_id)

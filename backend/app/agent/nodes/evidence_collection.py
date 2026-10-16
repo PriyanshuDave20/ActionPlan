@@ -14,7 +14,11 @@ def collect_evidence_node(state: AgentState, retriever: VectorRetriever) -> Agen
     all_evidence: list[Evidence] = []
 
     for requirement in requirements:
-        hits = retriever.retrieve(requirement.text, limit=3) or []
+        workflow_id = state.get("workflow_id")
+        if workflow_id:
+            hits = retriever.retrieve(requirement.text, limit=3, workflow_id=workflow_id) or []
+        else:
+            hits = retriever.retrieve(requirement.text, limit=3) or []
         targeted.append(
             TargetedEvidence(
                 requirement_id=requirement.id,

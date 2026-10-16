@@ -39,6 +39,29 @@ class AgentService:
         result = self.graph.invoke(initial_state)
         return self._to_workflow_state(result)
 
+    def rebuild_workflow(self, workflow: WorkflowState) -> WorkflowState:
+        """Re-run analysis for an existing workflow, preserving its identity and attachments."""
+        request = workflow.work_request
+        payload = WorkRequestInput(
+            goal=workflow.original_goal,
+            people_involved=request.people if request else [],
+            deadline=request.deadline if request else None,
+            priority=request.priority if request else "medium",
+            current_status=request.current_status if request else None,
+            constraints=request.constraints if request else [],
+            resources=request.resources if request else [],
+            success_criteria=request.success_criteria if request else [],
+        )
+        result = self.graph.invoke({
+            "workflow_id": workflow.workflow_id,
+            "original_goal": workflow.original_goal,
+            "work_request_input": payload,
+            "incoming_completed_task_ids": [],
+            "completed_tasks": workflow.completed_tasks,
+            "execution_metadata": workflow.execution_metadata,
+        })
+        return self._to_workflow_state(result)
+
     def continue_workflow(
         self,
         workflow_id: str | WorkflowState,

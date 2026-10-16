@@ -6,6 +6,8 @@ createGoalRequest,
 getWorkflowRequest,
 listWorkflowsRequest,
 checkBackendHealth,
+  ingestDocumentRequest,
+  refreshWorkflowRequest,
 type BackendStatus,
 } from "./api/client";
 import type { WorkflowSummary } from "./api/workflow-types";
@@ -29,11 +31,11 @@ Workplace Operations Agent
 
     <nav className="nav">
       <button type="button" onClick={() => navigate("")}>
-        New Request
+        New project
       </button>
 
       <button type="button" onClick={() => navigate("history")}>
-        History
+        Projects
       </button>
 
       <button type="button" onClick={() => navigate("about")}>
@@ -41,7 +43,7 @@ Workplace Operations Agent
       </button>
 
       {activeWorkflows ? (
-        <span className="nav-badge">active workflows</span>
+        <span className="nav-badge">project open</span>
       ) : null}
 
       {backendStatus !== undefined ? (
@@ -105,22 +107,23 @@ try {
 
 return (
 <section className="page">
-<h1>Create an action plan</h1>
+  <p className="eyebrow">WORKPLACE OPERATIONS</p>
+  <h1>Turn a project goal into a clear plan.</h1>
 
   <p className="lede">
-    Describe the work you need done. The agent will analyze the objective,
+    Start with the outcome you want. ActionPlan will analyze the objective,
     extract requirements, plan and validate an execution order, and
     recommend the next action - without executing anything automatically.
   </p>
 
   <form className="card form" onSubmit={handleSubmit}>
     <label className="field">
-      <span>Goal</span>
+      <span>What are you working on?</span>
 
       <textarea
         value={goal}
         onChange={(event) => setGoal(event.target.value)}
-        placeholder="e.g. Prepare Project Alpha for production"
+      placeholder="e.g. Prepare Project Alpha for production by coordinating launch readiness, approvals, and team handoffs."
         rows={4}
         required
       />
@@ -129,7 +132,7 @@ return (
     {error ? <ErrorBanner message={error} /> : null}
 
     <button type="submit" className="primary" disabled={submitting}>
-      {submitting ? "Analyzing…" : "Analyze goal"}
+      {submitting ? "Building your project…" : "Create project →"}
     </button>
   </form>
 </section>
@@ -141,6 +144,8 @@ function WorkflowPage({ workflowId }: { workflowId: string }) {
 const [workflow, setWorkflow] = useState<any>(null);
 const [error, setError] = useState<string | null>(null);
 const [completing, setCompleting] = useState(false);
+const [uploading, setUploading] = useState(false);
+const [documents, setDocuments] = useState<string[]>([]);
 
 useEffect(() => {
 let cancelled = false;
@@ -151,6 +156,7 @@ let cancelled = false;
 
     if (!cancelled) {
       setWorkflow(data);
+      setDocuments(data.execution_metadata?.documents ?? []);
     }
   } catch (reason) {
     if (!cancelled) {
@@ -171,7 +177,6 @@ async function handleContinue() {
 if (!workflow) {
 return;
 }
-
 setCompleting(true);
 setError(null);
 
@@ -187,14 +192,36 @@ try {
   setError(reason instanceof Error ? reason.message : String(reason));
   setCompleting(false);
 }
+}
 
+async function handleDocumentUpload(event: React.ChangeEvent<HTMLInputElement>) {
+  const files = Array.from(event.target.files ?? []);
+  if (!files.length) return;
+  setUploading(true);
+  setError(null);
+  try {
+    for (const file of files) {
+      const result = await ingestDocumentRequest(file, workflowId);
+      setDocuments((current) => current.includes(result.filename) ? current : [...current, result.filename]);
+    }
+    const refreshed = await refreshWorkflowRequest(workflowId);
+    setWorkflow(refreshed);
+    setDocuments(refreshed.execution_metadata?.documents ?? []);
+  } catch (reason) {
+    setError(reason instanceof Error ? reason.message : String(reason));
+  } finally {
+    setUploading(false);
+    event.target.value = "";
+  }
 }
 
 if (error) {
 return (
 <section className="page">
-<h1>Workflow</h1>
+<p className="eyebrow">PROJECT UNAVAILABLE</p>
+<h1>We couldn’t open this project.</h1>
 <ErrorBanner message={error} />
+<button type="button" className="primary" onClick={() => navigate("history")}>Back to projects</button>
 </section>
 );
 }
@@ -230,6 +257,19 @@ return (
           : "Continue workflow"}
     </button>
   </div>
+
+  <div className="card documents-card">
+    <div className="section-title-row">
+      <div><p className="eyebrow">PROJECT KNOWLEDGE</p><h2>Documents</h2></div>
+      <label className={`button secondary upload-button ${uploading ? "disabled" : ""}`}>
+        {uploading ? "Ingesting and updating…" : "＋ Add documents"}
+        <input type="file" accept=".pdf,.txt,.md,.csv" multiple disabled={uploading} onChange={handleDocumentUpload} />
+      </label>
+    </div>
+    <p className="muted">Add project files to ground the plan in your own policies and materials. The plan refreshes after ingestion.</p>
+    {documents.length ? <ul className="document-list">{documents.map((name) => <li key={name}><span className="document-icon">↳</span>{name}</li>)}</ul> : <p className="empty-inline">No documents added yet.</p>}
+  </div>
+  {error ? <ErrorBanner message={error} /> : null}
 
   {workflow.recommendation ? (
     <div className="card recommendation-card">
@@ -440,57 +480,27 @@ return <Loading />;
 
 return (
 <section className="page">
-<h1>Workflow history</h1>
+<p className="eyebrow">YOUR WORKSPACE</p>
+<h1>Projects</h1>
+<p className="lede">Pick up where you left off or open a project to review its plan and documents.</p>
 
   {workflows.length === 0 ? (
-    <div className="card muted">No workflows yet.</div>
+    <div className="card empty-state"><h2>No projects yet</h2><p>Create a project to get a tailored action plan.</p><button className="primary" onClick={() => navigate("")}>Create a project →</button></div>
   ) : (
-    <table className="task-table">
-      <thead>
-        <tr>
-          <th>Workflow</th>
-          <th>Goal</th>
-          <th>Progress</th>
-          <th>Recommendation</th>
-        </tr>
-      </thead>
-
-      <tbody>
-        {workflows.map((workflow) => {
-          const progress =
-            workflow.total_tasks === 0
-              ? 0
-              : Math.round(
-                  (workflow.completed_tasks / workflow.total_tasks) * 100,
-                );
-
-          return (
-            <tr
-              key={workflow.workflow_id}
-              onClick={() =>
-                navigate(`workflow/${workflow.workflow_id}`)
-              }
-              className="clickable"
-            >
-              <td>
-                <code>{workflow.workflow_id}</code>
-              </td>
-
-              <td>{workflow.goal}</td>
-
-              <td>
-                {workflow.completed_tasks}/{workflow.total_tasks} (
-                {progress}%)
-              </td>
-
-              <td className="muted">
-                {workflow.recommendation_action ?? "—"}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div className="project-grid">
+      {workflows.map((workflow) => {
+        const progress = workflow.total_tasks === 0 ? 0 : Math.round((workflow.completed_tasks / workflow.total_tasks) * 100);
+        return (
+          <button key={workflow.workflow_id} type="button" className="project-card" onClick={() => navigate(`workflow/${encodeURIComponent(workflow.workflow_id)}`)}>
+            <span className="project-card-top"><span className="project-status">{workflow.priority} priority</span><span className="project-progress">{progress}%</span></span>
+            <strong>{workflow.goal}</strong>
+            <span className="project-card-meta">{workflow.completed_tasks} of {workflow.total_tasks} actions complete</span>
+            <span className="project-progress-track"><span style={{ width: `${progress}%` }} /></span>
+            <span className="project-card-next">{workflow.recommendation_action ?? "Open project"}<span aria-hidden="true"> →</span></span>
+          </button>
+        );
+      })}
+    </div>
   )}
 </section>
 
@@ -559,7 +569,7 @@ return () => {
 
 }, []);
 
-const workflowMatch = matchRoute(route, "workflow/");
+const workflowMatch = matchRoute(route, "workflow/:id");
 
 let content: React.ReactNode;
 

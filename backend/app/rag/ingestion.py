@@ -38,13 +38,14 @@ def ingest_text(
     store: VectorStore,
     chunk_size: int = 512,
     overlap: int = 48,
+    workflow_id: str | None = None,
 ) -> int:
     chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
     vectors = embeddings.embed(chunks)
     for chunk, vector in zip(chunks, vectors):
         store.add(
             chunk,
-            {"source": source, "page": 0, "document_type": document_type},
+            {"source": f"{workflow_id}::{source}" if workflow_id else source, "page": 0, "document_type": document_type},
             vector,
         )
     return len(chunks)

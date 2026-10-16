@@ -23,3 +23,14 @@ def get_workflow(
     if workflow is None:
         raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found.")
     return workflow
+
+
+@router.post("/{workflow_id}/refresh", response_model=WorkflowState)
+def refresh_workflow(
+    workflow_id: str,
+    service: AgentService = Depends(get_agent_service),
+) -> WorkflowState:
+    workflow = service.get_workflow(workflow_id)
+    if workflow is None:
+        raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found.")
+    return service.rebuild_workflow(workflow)

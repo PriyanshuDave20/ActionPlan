@@ -103,13 +103,19 @@ class ZillizVectorStore:
         }
         self._client.insert(self.collection_name, [record])
 
-    def search(self, embedding: list[float], limit: int = 5) -> list[Evidence]:
+    def search(self, embedding: list[float], limit: int = 5, workflow_id: str | None = None) -> list[Evidence]:
+        search_filter = (
+            f'(source like "{workflow_id}::%" or source not like "%::%")'
+            if workflow_id
+            else ""
+        )
         results = self._client.search(
             collection_name=self.collection_name,
             data=[embedding[: self.dimension]],
             anns_field="embedding",
             limit=limit,
             output_fields=["content", "source", "page", "document_type"],
+            filter=search_filter,
         )
         evidence: list[Evidence] = []
         for hits in results:

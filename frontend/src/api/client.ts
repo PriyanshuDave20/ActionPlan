@@ -107,11 +107,20 @@ export function listWorkflowsRequest(): Promise<WorkflowSummary[]> {
 
 export async function ingestDocumentRequest(
   file: File,
+  workflowId?: string,
 ): Promise<IngestResponse> {
   const body = new FormData();
   body.append("file", file);
+  if (workflowId) body.append("workflow_id", workflowId);
   return requestJson<IngestResponse>("/documents/ingest", {
     method: "POST",
     body,
   });
+}
+
+export function refreshWorkflowRequest(workflowId: string): Promise<WorkflowState> {
+  return requestJson<WorkflowState>(
+    `/workflows/${encodeURIComponent(workflowId)}/refresh`,
+    { method: "POST" },
+  );
 }

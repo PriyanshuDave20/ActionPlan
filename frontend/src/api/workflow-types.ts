@@ -197,7 +197,7 @@ export interface WorkflowState {
   detected_blockers: Blocker[];
   recommendation: Recommendation | null;
   memory_context: string[];
-  execution_metadata: Record<string, unknown>;
+  execution_metadata: { documents?: string[]; [key: string]: unknown };
 }
 
 export interface WorkflowSummary {
