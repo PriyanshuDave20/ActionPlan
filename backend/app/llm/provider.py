@@ -456,6 +456,9 @@ def create_llm_provider(settings: Settings) -> LLMProvider:
             # the OpenAI SDK, so the wire payload keeps the standard
             # ``max_tokens`` field.
             "extra_body": {"max_tokens": MAX_OUTPUT_TOKENS},
+                "chat_template_kwargs": {
+                "enable_thinking": False
+            },
         }
 
         llm = ChatOpenAI(**llm_kwargs)
