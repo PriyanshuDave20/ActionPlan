@@ -103,30 +103,55 @@ class ZillizVectorStore:
         }
         self._client.insert(self.collection_name, [record])
 
-    def search(self, embedding: list[float], limit: int = 5, workflow_id: str | None = None) -> list[Evidence]:
-        search_filter = (
-            f'(source like "{workflow_id}::%" or source not like "%::%")'
-            if workflow_id
-            else ""
-        )
+
+    def search(
+        self,
+        embedding: list[float],
+        limit: int = 5,
+        workflow_id: str | None = None,
+    ) -> list[Evidence]:
+        # Retrieve extra candidates because workflow filtering happens locally.
+        candidate_limit = max(limit * 20, 100) if workflow_id else limit
+
         results = self._client.search(
             collection_name=self.collection_name,
-            data=[embedding[: self.dimension]],
+            data=[
+                embedding[: self.dimension]
+                + [0.0] * max(0, self.dimension - len(embedding))
+            ],
             anns_field="embedding",
-            limit=limit,
+            limit=candidate_limit,
             output_fields=["content", "source", "page", "document_type"],
-            filter=search_filter,
         )
+
         evidence: list[Evidence] = []
+
         for hits in results:
             for hit in hits:
                 entity = hit.get("entity", {})
+                source = str(entity.get("source", ""))
+
+                if workflow_id is not None:
+                    belongs_to_workflow = source.startswith(
+                        f"{workflow_id}::"
+                    )
+                    is_shared = "::" not in source
+
+                    if not (belongs_to_workflow or is_shared):
+                        continue
+
                 evidence.append(
                     Evidence(
                         content=entity.get("content", ""),
-                        source=entity.get("source", ""),
+                        source=source,
                         page=entity.get("page", 1),
-                        document_type=entity.get("document_type", "unknown"),
+                        document_type=entity.get(
+                            "document_type", "unknown"
+                        ),
                     )
                 )
+
+                if len(evidence) >= limit:
+                    return evidence
+
         return evidence
