@@ -22,7 +22,19 @@ class LangChainEmbeddingsAdapter:
 def create_embeddings(settings: Settings):
     provider = (settings.embedding_provider or "").lower().strip()
 
-    if provider in {"openai", "openai-compatible", "nvidia"}:
+    if provider == "nvidia":
+        model = settings.embedding_model
+        api_key = settings.resolved_embedding_api_key
+        base_url = settings.resolved_embedding_base_url or "https://integrate.api.nvidia.com/v1"
+        if not model or not api_key:
+            raise ValueError("EMBEDDING_MODEL and an NVIDIA API key are required for NVIDIA embeddings.")
+        return NVIDIAEmbeddingProvider(
+            api_url=f"{base_url.rstrip('/')}/embeddings",
+            model=model,
+            api_key=api_key,
+        )
+
+    if provider in {"openai", "openai-compatible"}:
         from langchain_openai import OpenAIEmbeddings
 
         model = settings.embedding_model
@@ -37,12 +49,6 @@ def create_embeddings(settings: Settings):
                     check_embedding_ctx_length=False,
                     timeout=120,
                 )
-            )
-        if provider == "nvidia" and model and api_key:
-            return NVIDIAEmbeddingProvider(
-                api_url="https://integrate.api.nvidia.com/v1/embeddings",
-                model=model,
-                api_key=api_key,
             )
 
     if provider == "mock":
@@ -69,6 +75,7 @@ def create_vector_store(settings: Settings):
                 uri=settings.zilliz_uri,
                 token=settings.zilliz_token,
                 collection_name=settings.zilliz_collection,
+                database_name=settings.zilliz_database,
             )
         raise ValueError(
             "ZILLIZ_URI and ZILLIZ_TOKEN are required when VECTOR_STORE=zilliz."

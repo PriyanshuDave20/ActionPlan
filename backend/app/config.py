@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Vector store / RAG. Zilliz Cloud is the intended V1 backend.
     zilliz_uri: str | None = None
     zilliz_token: str | None = None
+    zilliz_database: str = "default"
     vector_store: Literal["zilliz", "in-memory"] = "zilliz"
     zilliz_collection: str = "workplace_documents"
 

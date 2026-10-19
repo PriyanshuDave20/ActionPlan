@@ -14,10 +14,12 @@ class ZillizVectorStore:
         token: str,
         collection_name: str,
         dimension: int = DIMENSION,
+        database_name: str = "default",
     ) -> None:
         self.uri = uri
         self.token = token
         self.collection_name = collection_name
+        self.database_name = database_name
         self.dimension = dimension
         self._client = None
         self._connect()
@@ -25,7 +27,32 @@ class ZillizVectorStore:
     def _connect(self) -> None:
         from pymilvus import MilvusClient
 
-        self._client = MilvusClient(uri=self.uri, token=self.token)
+        client = MilvusClient(
+            uri=self.uri,
+            token=self.token,
+            db_name=self.database_name,
+        )
+        # Existing deployments may have their collection in a named database
+        # while older configuration only specifies the cluster and collection.
+        # Find that collection before _ensure_collection can create a duplicate
+        # in the default database.
+        if (
+            self.database_name == "default"
+            and not client.has_collection(self.collection_name)
+        ):
+            for database_name in client.list_databases():
+                if database_name == "default":
+                    continue
+                candidate = MilvusClient(
+                    uri=self.uri,
+                    token=self.token,
+                    db_name=database_name,
+                )
+                if candidate.has_collection(self.collection_name):
+                    self.database_name = database_name
+                    client = candidate
+                    break
+        self._client = client
         self._ensure_collection()
 
     def _ensure_collection(self) -> None:
@@ -57,9 +84,7 @@ class ZillizVectorStore:
         AUTOINDEX picks the default index type per dimension."""
         index_info = self._client.list_indexes(self.collection_name)
         if not index_info:
-            from pymilvus.milvus_client.index import IndexParams
-
-            index_params = IndexParams()
+            index_params = self._client.prepare_index_params()
             index_params.add_index(
                 field_name="embedding",
                 index_type="AUTOINDEX",
@@ -72,30 +97,23 @@ class ZillizVectorStore:
             )
 
     def _ensure_loaded(self) -> None:
-        """Milvus/Zilliz searches only run against collections loaded into
-        memory. Newly created or previously loaded collections may not be
-        loaded yet, so load idempotently before any search."""
-        try:
-            from pymilvus import utility
-
-            from pymilvus.milvus_client import connections
-
-            conn = connections.get_connection(self._client.conn_name)
-            state = utility.load_state(self.collection_name, using=conn)
-            if state != "Loaded":
-                self._client.load_collection(self.collection_name)
-        except Exception:
-            # load_state may not exist across pymilvus versions; loading twice
-            # is harmless, so fall back to a direct, idempotent load.
+        """Use the MilvusClient API to ensure the collection is queryable."""
+        state = self._client.get_load_state(self.collection_name).get("state")
+        state_name = getattr(state, "name", str(state)).lower()
+        if state_name != "loaded":
             self._client.load_collection(self.collection_name)
 
     def add(self, content: str, metadata: dict[str, Any], embedding: list[float]) -> None:
         import uuid
 
+        if len(embedding) != self.dimension:
+            raise ValueError(
+                f"Embedding dimension {len(embedding)} does not match Milvus collection "
+                f"dimension {self.dimension}. Use the same embedding model for indexing and search."
+            )
         record = {
             "id": uuid.uuid4().hex,
-            "embedding": embedding[: self.dimension]
-            + [0.0] * max(0, self.dimension - len(embedding)),
+            "embedding": embedding,
             "content": content,
             "source": metadata.get("source", ""),
             "page": metadata.get("page", 1),
@@ -110,18 +128,34 @@ class ZillizVectorStore:
         limit: int = 5,
         workflow_id: str | None = None,
     ) -> list[Evidence]:
-        # Retrieve extra candidates because workflow filtering happens locally.
-        candidate_limit = max(limit * 20, 100) if workflow_id else limit
+        if len(embedding) != self.dimension:
+            raise ValueError(
+                f"Embedding dimension {len(embedding)} does not match Milvus collection "
+                f"dimension {self.dimension}. Use the same embedding model for indexing and search."
+            )
+
+        search_filter = ""
+        if workflow_id is not None:
+            # Escape LIKE wildcards so workflow IDs containing underscores do
+            # not match another project's namespace.
+            prefix = (
+                workflow_id.replace("\\", "\\\\")
+                .replace('"', '\\"')
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            search_filter = (
+                f'(source like r"{prefix}::%" or '
+                'not (source like r"%::%"))'
+            )
 
         results = self._client.search(
             collection_name=self.collection_name,
-            data=[
-                embedding[: self.dimension]
-                + [0.0] * max(0, self.dimension - len(embedding))
-            ],
+            data=[embedding],
             anns_field="embedding",
-            limit=candidate_limit,
+            limit=limit,
             output_fields=["content", "source", "page", "document_type"],
+            filter=search_filter,
         )
 
         evidence: list[Evidence] = []
@@ -130,15 +164,8 @@ class ZillizVectorStore:
             for hit in hits:
                 entity = hit.get("entity", {})
                 source = str(entity.get("source", ""))
-
-                if workflow_id is not None:
-                    belongs_to_workflow = source.startswith(
-                        f"{workflow_id}::"
-                    )
-                    is_shared = "::" not in source
-
-                    if not (belongs_to_workflow or is_shared):
-                        continue
+                if workflow_id is not None and source.startswith(f"{workflow_id}::"):
+                    source = source[len(workflow_id) + 2 :]
 
                 evidence.append(
                     Evidence(
@@ -150,8 +177,5 @@ class ZillizVectorStore:
                         ),
                     )
                 )
-
-                if len(evidence) >= limit:
-                    return evidence
 
         return evidence

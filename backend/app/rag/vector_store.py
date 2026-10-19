@@ -107,7 +107,12 @@ class VectorRetriever:
         self.embeddings = embeddings
 
     def retrieve(self, query: str, limit: int = 5, workflow_id: str | None = None) -> list[Evidence]:
-        embedding = self.embeddings.embed([query])[0]
+        embed_query = getattr(self.embeddings, "embed_query", None)
+        embedding = (
+            embed_query(query)
+            if callable(embed_query)
+            else self.embeddings.embed([query])[0]
+        )
         if workflow_id is None:
             return self.store.search(embedding, limit=limit)
         return self.store.search(embedding, limit=limit, workflow_id=workflow_id)

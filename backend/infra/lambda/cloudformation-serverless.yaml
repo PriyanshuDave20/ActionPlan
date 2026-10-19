@@ -26,6 +26,9 @@ Parameters:
   DynamoDbTableName:
     Type: String
     Default: ActionPlanner
+  ZillizDatabaseName:
+    Type: String
+    Default: db_c38709e8b8a4ab0
   ImageTag:
     Type: String
     Default: latest
@@ -255,6 +258,7 @@ Resources:
           EMBEDDING_PROVIDER: nvidia
           EMBEDDING_MODEL: nvidia/nemotron-3-embed-1b
           VECTOR_STORE: zilliz
+          ZILLIZ_DATABASE: !Ref ZillizDatabaseName
           LANGCHAIN_TRACING_V2: "true"
           LANGCHAIN_PROJECT: workplace-operations-agent
           FRONTEND_ORIGIN: !Ref AmplifyDomain

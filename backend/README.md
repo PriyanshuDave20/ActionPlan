@@ -17,7 +17,7 @@ All values live in `backend/.env` (gitignored). `backend/.env.example` documents
 
 - `LLM_PROVIDER`: `openai-compatible` / `nvidia` / `ollama` / `mock`
 - `EMBEDDING_PROVIDER`: `openai-compatible` / `nvidia` / `mock`
-- `VECTOR_STORE`: `zilliz` (cloud, requires `ZILLIZ_URI` + `ZILLIZ_TOKEN`) / `in-memory`
+- `VECTOR_STORE`: `zilliz` (cloud, requires `ZILLIZ_URI`, `ZILLIZ_TOKEN`, and the correct `ZILLIZ_DATABASE`) / `in-memory`
 - `MEMORY_BACKEND`: `dynamodb` / `local`
 - `LANGCHAIN_TRACING_V2`, `LANGSMITH_API_KEY`, `LANGCHAIN_PROJECT`: LangSmith tracing
 

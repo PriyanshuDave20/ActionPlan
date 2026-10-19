@@ -7,6 +7,7 @@ These cover the LangChainEmbeddingsAdapter that lets the app's VectorRetriever
 
 from app.config import Settings
 from app.rag.factory import LangChainEmbeddingsAdapter, create_embeddings
+from app.rag.embeddings import NVIDIAEmbeddingProvider
 
 
 class _FakeLangChainEmbeddings:
@@ -42,11 +43,21 @@ def test_retriever_accepts_adapter_powered_store(tmp_path):
     assert evidence and evidence[0].source == "cloud.md"
 
 
-def test_create_embeddings_returns_adapter_for_cloud_provider(monkeypatch):
-    monkeypatch.setattr(
-        "langchain_openai.OpenAIEmbeddings",
-        _FakeLangChainEmbeddings,
-    )
+def test_nvidia_embeddings_use_query_and_passage_modes(monkeypatch):
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"embedding": [1.0, 2.0]}]}
+
+    def post(url, *, json, headers, timeout):
+        calls.append((url, json))
+        return Response()
+
+    monkeypatch.setattr("httpx.post", post)
     settings = Settings(
         embedding_provider="nvidia",
         embedding_model="model-x",
@@ -55,5 +66,9 @@ def test_create_embeddings_returns_adapter_for_cloud_provider(monkeypatch):
         llm_api_key="secret",
     )
     embeddings = create_embeddings(settings)
-    assert isinstance(embeddings, LangChainEmbeddingsAdapter)
-    assert embeddings.embed(["hi"]) == [[2.0]]
+    assert isinstance(embeddings, NVIDIAEmbeddingProvider)
+    assert embeddings.embed_documents(["doc"]) == [[1.0, 2.0]]
+    assert embeddings.embed_query("query") == [1.0, 2.0]
+    assert calls[0][1]["input_type"] == "passage"
+    assert calls[1][1]["input_type"] == "query"
+    assert calls[0][0] == "https://integrate.api.nvidia.com/v1/embeddings"

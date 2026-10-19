@@ -36,10 +36,27 @@ class NVIDIAEmbeddingProvider:
         self.model = model
         self.api_key = api_key
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        payload = {"model": self.model, "input": texts}
+    def _embed(self, texts: list[str], input_type: str) -> list[list[float]]:
+        if not texts:
+            return []
+        payload = {"model": self.model, "input": texts, "input_type": input_type}
         headers = {"Authorization": f"Bearer {self.api_key}"}
         response = httpx.post(self.api_url, json=payload, headers=headers, timeout=120)
         response.raise_for_status()
         data = response.json()
-        return [item["embedding"] for item in data["data"]]
+        vectors = [item["embedding"] for item in data["data"]]
+        if len(vectors) != len(texts):
+            raise RuntimeError(
+                f"NVIDIA embeddings returned {len(vectors)} vectors for {len(texts)} inputs."
+            )
+        return vectors
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Default to passage mode for backward-compatible indexing calls."""
+        return self._embed(texts, input_type="passage")
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts, input_type="passage")
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed([text], input_type="query")[0]

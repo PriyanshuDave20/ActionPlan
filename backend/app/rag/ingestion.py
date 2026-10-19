@@ -41,7 +41,8 @@ def ingest_text(
     workflow_id: str | None = None,
 ) -> int:
     chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
-    vectors = embeddings.embed(chunks)
+    embed_documents = getattr(embeddings, "embed_documents", None)
+    vectors = embed_documents(chunks) if callable(embed_documents) else embeddings.embed(chunks)
     for chunk, vector in zip(chunks, vectors):
         store.add(
             chunk,
@@ -71,7 +72,8 @@ def ingest_document(
         document_type = "text"
 
     chunks = chunk_text(full_text, chunk_size=chunk_size, overlap=overlap)
-    vectors = embeddings.embed(chunks)
+    embed_documents = getattr(embeddings, "embed_documents", None)
+    vectors = embed_documents(chunks) if callable(embed_documents) else embeddings.embed(chunks)
     for chunk, vector in zip(chunks, vectors):
         store.add(
             chunk,
