@@ -1,3 +1,4 @@
+
 version: 0.2
 
 phases:
@@ -13,39 +14,36 @@ phases:
       - 'echo "AWS Account: ${AWS_ACCOUNT_ID}"'
       - 'echo "AWS Region: ${AWS_REGION}"'
       - 'echo "ECR Repository: ${ECR_REPOSITORY_NAME}"'
-      - 'echo "ECR Registry: ${REGISTRY}"'
-      - 'echo "Image Tag: ${IMAGE_TAG}"'
       - 'echo "Image URI: ${IMAGE_URI}"'
       - 'if [ -z "${ECR_REPOSITORY_NAME}" ]; then echo "ERROR: ECR_REPOSITORY_NAME is not set"; exit 1; fi'
-      - 'if [ -z "${IMAGE_TAG}" ]; then echo "ERROR: IMAGE_TAG is not set"; exit 1; fi'
+      - 'if [ -z "${AWS_REGION}" ]; then echo "ERROR: AWS_DEFAULT_REGION is not set"; exit 1; fi'
+      - 'if [ -z "${LAMBDA_FUNCTION_NAME}" ]; then echo "ERROR: LAMBDA_FUNCTION_NAME is not set"; exit 1; fi'
       - 'aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${REGISTRY}"'
 
   build:
     commands:
       - 'echo "Current directory:"'
       - 'pwd'
-      - 'echo "Backend files:"'
       - 'ls -la'
-      - 'echo "Building Docker image"'
       - 'docker version'
       - 'docker build --platform linux/amd64 -t "${IMAGE_URI}" -f Dockerfile.lambda .'
-      - 'echo "Docker build completed"'
-      - 'echo "Checking local image:"'
-      - 'docker images'
-      - 'echo "Verifying image tag:"'
       - 'docker image inspect "${IMAGE_URI}"'
 
   post_build:
     commands:
-      - 'echo "Pushing image to ECR"'
+      - 'echo "Pushing commit-specific image to ECR"'
       - 'docker push "${IMAGE_URI}"'
-      - 'echo "Image pushed successfully"'
-      - 'echo "Tagging latest"'
+      - 'echo "Updating latest tag"'
       - 'docker tag "${IMAGE_URI}" "${REGISTRY}/${ECR_REPOSITORY_NAME}:latest"'
       - 'docker push "${REGISTRY}/${ECR_REPOSITORY_NAME}:latest"'
-      - 'echo "Build completed successfully"'
-      - 'echo "Final image URI: ${IMAGE_URI}"'
+      - 'echo "Deploying image to Lambda: ${LAMBDA_FUNCTION_NAME}"'
+      - 'aws lambda update-function-code --function-name "${LAMBDA_FUNCTION_NAME}" --image-uri "${IMAGE_URI}" --region "${AWS_REGION}"'
+      - 'echo "Waiting for Lambda update to finish"'
+      - 'aws lambda wait function-updated-v2 --function-name "${LAMBDA_FUNCTION_NAME}" --region "${AWS_REGION}"'
+      - 'echo "Lambda deployment completed successfully"'
+      - 'aws lambda get-function-configuration --function-name "${LAMBDA_FUNCTION_NAME}" --region "${AWS_REGION}" --query "{FunctionName:FunctionName,ImageConfig:ImageConfigResponse,LastUpdateStatus:LastUpdateStatus,LastUpdateStatusReason:LastUpdateStatusReason}"'
       - 'echo "IMAGE_URI=${IMAGE_URI}" > image-uri.txt'
+      - 'echo "Build and deployment completed successfully"'
 
 artifacts:
   files:
