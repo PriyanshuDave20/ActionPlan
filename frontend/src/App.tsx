@@ -107,8 +107,8 @@ async function handleSubmit(event: React.FormEvent) {
     let workflowId = createdWorkflowId;
     if (!workflowId) {
       setProgress("Creating project…");
-      // Use sync=true to wait for completion and get full workflow data
-      const workflow = await createGoalRequest({ goal: goal.trim() }, true);
+      // Async: returns immediately with queued workflow
+      const workflow = await createGoalRequest({ goal: goal.trim() }, false);
       workflowId = workflow.workflow_id;
       setCreatedWorkflowId(workflowId);
     }
