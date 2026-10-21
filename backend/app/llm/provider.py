@@ -555,32 +555,28 @@ def create_llm_provider(settings: Settings) -> LLMProvider:
             "temperature": 0,
             "timeout": 900,
             "max_retries": 0,
-            # Cap generation so a confused model cannot ramble for tens of
-            # seconds (and blow past the Lambda timeout) echoing the schema.
-            # These structured outputs need at most a few hundred tokens.
-            #
-            # NOTE: this must be sent via ``extra_body``. langchain-openai
-            # 0.3.x unconditionally rewrites a top-level ``max_tokens`` into
-            # ``max_completion_tokens`` (see ChatOpenAI._default_params), a
-            # parameter NVIDIA's OpenAI-compatible endpoint does not accept.
-            # ``extra_body`` is merged verbatim into the JSON request body by
-            # the OpenAI SDK, so the wire payload keeps the standard
-            # ``max_tokens`` field.
-            "extra_body": {
-                "max_tokens": MAX_OUTPUT_TOKENS,
-            },
-        }
+# Cap generation so a confused model cannot ramble for tens of
+        # seconds (and blow past the Lambda timeout) echoing the schema.
+        # These structured outputs need at most a few hundred tokens.
+        #
+        # NOTE: this must be sent via ``extra_body``. langchain-openai
+        # 0.3.x unconditionally rewrites a top-level ``max_tokens`` into
+        # ``max_completion_tokens`` (see ChatOpenAI._default_params), a
+        # parameter NVIDIA's OpenAI-compatible endpoint does not accept.
+        # ``extra_body`` is merged verbatim into the JSON request body by
+        # the OpenAI SDK, so the wire payload keeps the standard
+        # ``max_tokens`` field.
+        "extra_body": {
+            "max_tokens": MAX_OUTPUT_TOKENS,
+        },
+    }
 
-        # Only forward provider-specific chat template kwargs when explicitly
-        # configured. Sending unsupported parameters (e.g.
-        # chat_template_kwargs.enable_thinking) to an OpenAI-compatible
-        # endpoint can cause 400 errors.
-        chat_template_kwargs = settings.llm_chat_template_kwargs
-        if chat_template_kwargs:
-            llm_kwargs["extra_body"]["chat_template_kwargs"] = chat_template_kwargs
+    # NVIDIA Nemotron models need explicit thinking disabled for structured output
+    if provider == "nvidia":
+        llm_kwargs["extra_body"]["chat_template_kwargs"] = {"enable_thinking": False}
 
-        llm = ChatOpenAI(**llm_kwargs)
-        return LangChainStructuredProvider(llm)
+    llm = ChatOpenAI(**llm_kwargs)
+    return LangChainStructuredProvider(llm)
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama
