@@ -1,106 +1,126 @@
+
 AWSTemplateFormatVersion: "2010-09-09"
-Description: AI Workplace Operations Agent - serverless backend resources.
+Description: >
+  AI Workplace Operations Agent - supporting serverless resources.
+  References existing ActionPlan Lambda, ECR repository, and DynamoDB
+  table. Creates a new API Gateway, worker Lambda, and SQS queues.
+  Existing CodeBuild project is managed separately.
 
 Parameters:
-  LambdaRoleName:
+  ExistingFunctionName:
     Type: String
-    Default: workplace-operations-lambda-role
+    Default: ActionPlan
+    Description: Name of the existing core API Lambda function.
+
   EcrRepositoryName:
     Type: String
     Default: workplace-operations-agent
-  FunctionName:
-    Type: String
-    Default: ActionPlan
-  MemoryMb:
-    Type: Number
-    Default: 128
-    MaxValue: 10240
-  TimeoutSeconds:
-    Type: Number
-    Default: 3
-    MaxValue: 900
-  EphemeralStorageMb:
-    Type: Number
-    Default: 512
-    MaxValue: 5120
-  DynamoDbTableName:
-    Type: String
-    Default: ActionPlanner
-  ZillizDatabaseName:
-    Type: String
-    Default: db_c38709e8b8a4ab0
+    Description: Name of the existing ECR repository.
+
   ImageTag:
     Type: String
     Default: latest
-  CodeBuildProjectName:
+    Description: Existing container image tag used by the worker.
+
+  WorkerFunctionName:
     Type: String
-    Default: workplace-operations-agent-build
-  CodeBuildServiceRoleName:
+    Default: ActionPlanWorker
+
+  WorkerMemoryMb:
+    Type: Number
+    Default: 2048
+    MinValue: 128
+    MaxValue: 10240
+
+  WorkerTimeoutSeconds:
+    Type: Number
+    Default: 300
+    MinValue: 1
+    MaxValue: 900
+
+  WorkerEphemeralStorageMb:
+    Type: Number
+    Default: 1024
+    MinValue: 512
+    MaxValue: 10240
+
+  DynamoDbTableName:
     Type: String
-    Default: workplace-operations-codebuild-role
-  CodeBuildLogLevel:
+    Default: ActionPlanner
+    Description: Name of the existing DynamoDB table.
+
+  ZillizDatabaseName:
     Type: String
-    Default: INFO
-    AllowedValues: [INFO, ERROR]
-  GitHubSourceLocation:
-    Type: String
-    Default: ""
-  GitHubConnectionArn:
-    Type: String
-    Default: ""
+    Default: db_c38709e8b8a4ab0
+
   AmplifyDomain:
     Type: String
     Default: https://main.d2uczfq6giy37z.amplifyapp.com
 
+  LlmApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: NVIDIA API key. Prefer Secrets Manager for production.
+
+  ZillizUri:
+    Type: String
+    Default: ""
+    NoEcho: true
+
+  ZillizToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+
 Conditions:
-  HasGitHubSource:
-    Fn::Not:
-      - Fn::Equals:
-          - !Ref GitHubSourceLocation
-          - ""
+  HasLlmApiKey: !Not
+    - !Equals
+      - !Ref LlmApiKey
+      - ""
+
+  HasZillizUri: !Not
+    - !Equals
+      - !Ref ZillizUri
+      - ""
+
+  HasZillizToken: !Not
+    - !Equals
+      - !Ref ZillizToken
+      - ""
 
 Resources:
-  EcrRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: !Ref EcrRepositoryName
-      ImageScanningConfiguration:
-        ScanOnPush: true
-      RepositoryPolicy:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: LambdaPull
-            Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action:
-              - ecr:BatchGetImage
-              - ecr:GetDownloadUrlForLayer
-            Condition:
-              StringEquals:
-                aws:SourceAccount: !Ref "AWS::AccountId"
-          - Sid: AccountPush
-            Effect: Allow
-            Principal:
-              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
-            Action:
-              - ecr:GetAuthorizationToken
-              - ecr:BatchCheckLayerAvailability
-              - ecr:GetDownloadUrlForLayer
-              - ecr:GetRepositoryPolicy
-              - ecr:DescribeRepositories
-              - ecr:ListImages
-              - ecr:DescribeImages
-              - ecr:BatchGetImage
-              - ecr:InitiateLayerUpload
-              - ecr:UploadLayerPart
-              - ecr:CompleteLayerUpload
-              - ecr:PutImage
 
-  LambdaExecutionRole:
+  # -------------------------------------------------------
+  # SQS queues for asynchronous workflow execution
+  # -------------------------------------------------------
+
+  WorkflowQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: workplace-operations-workflow-dlq-v2
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  WorkflowQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: workplace-operations-workflow-v2
+      VisibilityTimeout: 360
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt WorkflowQueueDLQ.Arn
+        maxReceiveCount: 3
+
+  # -------------------------------------------------------
+  # New worker execution role
+  # -------------------------------------------------------
+
+  WorkerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Ref LambdaRoleName
+      RoleName: workplace-operations-worker-role-v2
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -108,10 +128,24 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
+
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
       Policies:
-        - PolicyName: DynamoDBMemoryAccess
+        - PolicyName: WorkflowQueueConsumer
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                Resource: !GetAtt WorkflowQueue.Arn
+
+        - PolicyName: ExistingDynamoDBTableAccess
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -119,136 +153,57 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
                   - dynamodb:Scan
-                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDbTableName}"
+                Resource:
+                  - !Sub
+                    "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDbTableName}"
+                  - !Sub
+                    "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDbTableName}/index/*"
 
-  CodeBuildServiceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Ref CodeBuildServiceRoleName
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: codebuild.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: EcrPushAccess
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ecr:GetAuthorizationToken
-                  - ecr:BatchCheckLayerAvailability
-                  - ecr:GetDownloadUrlForLayer
-                  - ecr:DescribeRepositories
-                  - ecr:ListImages
-                  - ecr:DescribeImages
-                  - ecr:BatchGetImage
-                  - ecr:InitiateLayerUpload
-                  - ecr:UploadLayerPart
-                  - ecr:CompleteLayerUpload
-                  - ecr:PutImage
-                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrRepositoryName}"
-        - PolicyName: CloudWatchLogsAccess
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                  - logs:DescribeLogStreams
-                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${CodeBuildProjectName}:*"
-        - PolicyName: ReportAccess
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - codebuild:CreateReportGroup
-                  - codebuild:CreateReport
-                  - codebuild:UpdateReport
-                  - codebuild:BatchPutTestCases
-                  - codebuild:BatchPutCodeCoverages
-                Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report/${CodeBuildProjectName}/*"
+  # -------------------------------------------------------
+  # Dedicated log group for the new worker
+  # -------------------------------------------------------
 
-  CodeBuildLogGroup:
+  WorkerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/codebuild/${CodeBuildProjectName}"
+      LogGroupName: !Sub "/aws/lambda/${WorkerFunctionName}"
       RetentionInDays: 30
 
-  CodeBuildProject:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: !Ref CodeBuildProjectName
-      Description: Builds the Lambda container image and pushes to ECR
-      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
-      TimeoutInMinutes: 30
-      QueuedTimeoutInMinutes: 15
-      BuildLogsConfig:
-        CloudWatchLogs:
-          Status: ENABLED
-          GroupName: !Sub "/aws/codebuild/${CodeBuildProjectName}"
-          StreamName: build
-        S3Logs:
-          Status: DISABLED
-      Artifacts:
-        Type: NO_ARTIFACTS
-      Environment:
-        Type: LINUX_CONTAINER
-        Image: aws/codebuild/standard:5.0
-        ComputeType: BUILD_GENERAL1_SMALL
-        PrivilegedMode: true
-        EnvironmentVariables:
-          - Name: AWS_REGION
-            Value: !Ref "AWS::Region"
-          - Name: ECR_REPOSITORY_NAME
-            Value: !Ref EcrRepositoryName
-          - Name: IMAGE_TAG
-            Value: !Ref ImageTag
-      Source:
-        Type: GITHUB
-        Location: !If [HasGitHubSource, !Ref GitHubSourceLocation, !Ref "AWS::NoValue"]
-        BuildSpec: buildspec.yml
-        GitCloneDepth: 1
-        GitHubConnectionArn: !If [HasGitHubSource, !Ref GitHubConnectionArn, !Ref "AWS::NoValue"]
-      Tags:
-        - Key: Project
-          Value: workplace-operations-agent
+  # -------------------------------------------------------
+  # New worker Lambda.
+  # Uses the existing ECR repository and image.
+  # The image must contain worker_handler.handler.
+  # -------------------------------------------------------
 
-  CodeBuildLogGroupLambda:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${FunctionName}"
-      RetentionInDays: 30
-
-  LambdaFunction:
+  WorkerLambdaFunction:
     Type: AWS::Lambda::Function
-    DependsOn: LambdaExecutionRole
+    DependsOn:
+      - WorkerLogGroup
     Properties:
-      FunctionName: !Ref FunctionName
+      FunctionName: !Ref WorkerFunctionName
       PackageType: Image
+
       Code:
         ImageUri: !Sub
-          - "${AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repo}:${Tag}"
-          - AccountId: !Ref "AWS::AccountId"
-            Repo: !Ref EcrRepositoryName
-            Tag: !Ref ImageTag
-      Role: !GetAtt LambdaExecutionRole.Arn
-      MemorySize: !Ref MemoryMb
-      Timeout: !Ref TimeoutSeconds
+          "${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}/${EcrRepositoryName}:${ImageTag}"
+
+      ImageConfig:
+        Command:
+          - worker_handler.handler
+
+      Role: !GetAtt WorkerExecutionRole.Arn
+      MemorySize: !Ref WorkerMemoryMb
+      Timeout: !Ref WorkerTimeoutSeconds
       EphemeralStorage:
-        Size: !Ref EphemeralStorageMb
+        Size: !Ref WorkerEphemeralStorageMb
       Architectures:
         - x86_64
+
       Environment:
         Variables:
-          AWS_REGION: !Ref "AWS::Region"
           DATA_DIR: /tmp/data
           DYNAMODB_TABLE_NAME: !Ref DynamoDbTableName
           MEMORY_BACKEND: dynamodb
@@ -261,33 +216,155 @@ Resources:
           ZILLIZ_DATABASE: !Ref ZillizDatabaseName
           LANGCHAIN_TRACING_V2: "true"
           LANGCHAIN_PROJECT: workplace-operations-agent
-          FRONTEND_ORIGIN: !Ref AmplifyDomain
+          WORKFLOW_QUEUE_URL: !Ref WorkflowQueue
+          LLM_API_KEY: !If
+            - HasLlmApiKey
+            - !Ref LlmApiKey
+            - !Ref AWS::NoValue
+          ZILLIZ_URI: !If
+            - HasZillizUri
+            - !Ref ZillizUri
+            - !Ref AWS::NoValue
+          ZILLIZ_TOKEN: !If
+            - HasZillizToken
+            - !Ref ZillizToken
+            - !Ref AWS::NoValue
+
+  # -------------------------------------------------------
+  # Connect SQS to the worker Lambda
+  # -------------------------------------------------------
+
+  WorkerEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt WorkflowQueue.Arn
+      FunctionName: !GetAtt WorkerLambdaFunction.Arn
+      Enabled: true
+      BatchSize: 1
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  # -------------------------------------------------------
+  # New HTTP API that invokes the EXISTING core Lambda
+  # -------------------------------------------------------
+
+  ApiGatewayApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: workplace-operations-agent-api-v2
+      ProtocolType: HTTP
+      Description: HTTP API for the existing ActionPlan Lambda.
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref AmplifyDomain
+          - http://localhost:5173
+          - http://127.0.0.1:5173
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+          - PATCH
+        AllowHeaders:
+          - "*"
+        AllowCredentials: true
+        MaxAge: 86400
+
+  ApiGatewayIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGatewayApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub
+        "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ExistingFunctionName}/invocations"
+      IntegrationMethod: POST
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 29000
+
+  ApiGatewayRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGatewayApi
+      RouteKey: "$default"
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${ApiGatewayIntegration}"
+
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/apigateway/workplace-operations-agent-v2
+      RetentionInDays: 30
+
+  ApiGatewayStage:
+    Type: AWS::ApiGatewayV2::Stage
+    DependsOn:
+      - ApiGatewayLogGroup
+    Properties:
+      ApiId: !Ref ApiGatewayApi
+      StageName: "$default"
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength"}'
+
+  # Add invocation permission to the existing Lambda.
+  # This does not create another Lambda function.
+
+  LambdaPermissionApiGateway:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ExistingFunctionName
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub
+        "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayApi}/*/*"
 
 Outputs:
-  LambdaRoleArn:
-    Value: !GetAtt LambdaExecutionRole.Arn
-    Description: ARN of the Lambda execution role.
-  EcrRepositoryUri:
+
+  ExistingCoreLambdaName:
+    Description: Existing core Lambda function; not created by this stack.
+    Value: !Ref ExistingFunctionName
+
+  ExistingCoreLambdaArn:
+    Description: ARN of the existing core Lambda.
     Value: !Sub
-      - "${AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repo}"
-      - AccountId: !Ref "AWS::AccountId"
-        Repo: !Ref EcrRepositoryName
-  LambdaFunctionName:
-    Value: !Ref FunctionName
-    Description: Name of the Lambda function.
-  LambdaFunctionArn:
-    Value: !GetAtt LambdaFunction.Arn
-    Description: ARN of the Lambda function.
-  CodeBuildProjectName:
-    Value: !Ref CodeBuildProjectName
-  CodeBuildLogGroupName:
-    Value: !Sub /aws/codebuild/${CodeBuildProjectName}
-  CodeBuildServiceRoleArn:
-    Value: !GetAtt CodeBuildServiceRole.Arn
-  DynamoDbTableName:
+      "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ExistingFunctionName}"
+
+  ExistingEcrRepositoryUri:
+    Description: URI of the existing ECR repository.
+    Value: !Sub
+      "${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}/${EcrRepositoryName}"
+
+  ExistingDynamoDbTableName:
+    Description: Existing DynamoDB table name.
     Value: !Ref DynamoDbTableName
+
+  WorkerFunctionName:
+    Description: Newly created SQS worker Lambda.
+    Value: !Ref WorkerLambdaFunction
+
+  WorkerFunctionArn:
+    Description: ARN of the newly created worker Lambda.
+    Value: !GetAtt WorkerLambdaFunction.Arn
+
+  WorkflowQueueUrl:
+    Description: Queue URL to configure in the existing core Lambda.
+    Value: !Ref WorkflowQueue
+
+  WorkflowQueueArn:
+    Description: ARN of the workflow SQS queue.
+    Value: !GetAtt WorkflowQueue.Arn
+
+  WorkflowDeadLetterQueueUrl:
+    Description: URL of the dead-letter queue.
+    Value: !Ref WorkflowQueueDLQ
+
+  ApiGatewayId:
+    Description: ID of the newly created HTTP API.
+    Value: !Ref ApiGatewayApi
+
   ApiGatewayUrl:
-    Value: !Sub "https://${AWS::AccountId}.execute-api.${AWS::Region}.amazonaws.com"
-    Description: Base URL for the API Gateway HTTP API.
-  AmplifyDomain:
-    Value: !Ref AmplifyDomain
+    Description: Base URL of the new HTTP API.
+    Value: !Sub
+      "https://${ApiGatewayApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/"

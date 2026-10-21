@@ -1,6 +1,6 @@
 export type EffortLevel = "small" | "medium" | "large" | "high";
 export type Priority = "low" | "medium" | "high";
-export type TaskStatus = "pending" | "in_progress" | "completed" | "blocked";
+export type TaskStatus = "pending" | "ready" | "in_progress" | "completed" | "blocked" | "cancelled";
 export type RequirementCategory =
   | "policy"
   | "process"
@@ -99,6 +99,8 @@ export interface Task {
   requirement_ids: string[];
   procedure_sources: string[];
   evidence: Evidence[];
+  acceptance_criteria?: string[];
+  readiness?: string;
 }
 
 export interface ProcedureOption {
@@ -131,6 +133,9 @@ export interface BlockedTask {
 }
 
 export interface Recommendation {
+  recommendation_id?: string;
+  status?: string;
+  assumptions?: string[];
   action: string;
   reason: string;
   priority: string;
@@ -198,12 +203,18 @@ export interface WorkflowState {
   recommendation: Recommendation | null;
   memory_context: string[];
   execution_metadata: { documents?: string[]; [key: string]: unknown };
+  version: number;
+  last_assessed_at?: string | null;
+  execution_state: "queued" | "running" | "needs_review" | "completed" | "failed";
+  execution_error: string | null;
 }
 
 export interface WorkflowSummary {
   workflow_id: string;
   goal: string;
   updated_at: string;
+  version: number;
+  last_assessed_at?: string | null;
   deadline: string | null;
   priority: Priority;
   total_tasks: number;
@@ -211,6 +222,9 @@ export interface WorkflowSummary {
   blocker_count: number;
   recommendation_action: string | null;
 }
+
+export interface WorkflowEvent { event_id: string; event_type: string; occurred_at: string; entity_id?: string | null; details: Record<string, unknown>; actor: string; version?: number; }
+export interface WorkflowEvidence { content: string; source: string; page?: number | null; document_type: string; provenance: string; }
 
 export interface IngestResponse {
   filename: string;

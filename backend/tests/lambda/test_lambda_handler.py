@@ -17,6 +17,7 @@ def _api_gateway_event(
     path: str,
     body: str | None = None,
     headers: dict | None = None,
+    query_string: str = "",
 ) -> dict:
     request_headers = {"content-type": "application/json"}
     if headers:
@@ -25,7 +26,7 @@ def _api_gateway_event(
         "version": "2.0",
         "routeKey": f"{method} {path}",
         "rawPath": path,
-        "rawQueryString": "",
+        "rawQueryString": query_string,
         "headers": request_headers,
         "requestContext": {
             "accountId": "123456789012",
@@ -105,6 +106,7 @@ def test_post_goals_event_translation(components):
             "POST",
             "/goals",
             body=json.dumps({"goal": "Prepare a launch"}),
+            query_string="sync=true",
         )
         response = lambda_handler.handler(event, {})
         assert response["statusCode"] == 201

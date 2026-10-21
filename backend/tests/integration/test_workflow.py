@@ -4,7 +4,7 @@ from app.agent.service import AgentService
 def test_langgraph_workflow_executes_and_persists(components):
     llm, retriever, memory, _ = components
     service = AgentService(llm, retriever, memory)
-    workflow = service.create_workflow("Prepare Project Alpha for production")
+    workflow = service.create_workflow_sync("Prepare Project Alpha for production")
     assert workflow.workflow_id
     assert len(workflow.tasks) == 4
     assert workflow.recommendation is not None

@@ -1,0 +1,1 @@
+Every change must be reviewed by a manager before merging.

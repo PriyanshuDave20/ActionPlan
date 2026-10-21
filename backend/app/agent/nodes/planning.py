@@ -3,13 +3,14 @@ from app.models.plan import CandidatePlan, CandidateTask
 from app.models.task import Task
 
 
-def _template_task(requirement, task_id: str, description: str, effort: str, dependencies: list[str]) -> CandidateTask:
+def _template_task(requirement, task_id: str, description: str, effort: str, dependencies: list[str], required_approvals: list[str] | None = None) -> CandidateTask:
     return CandidateTask(
         task_id=task_id,
         description=description,
         requirement_id=requirement.id,
         effort=effort,
         dependencies=dependencies,
+        required_approvals=required_approvals or [],
     )
 
 
@@ -27,10 +28,15 @@ def _materialize_tasks(candidate: CandidatePlan) -> list[Task]:
 
 
 def build_candidate_plan(state: AgentState) -> CandidatePlan:
-    """Derive an executable candidate plan from extracted requirements."""
+    """Derive an executable candidate plan from extracted requirements.
+
+    Tasks are independent by default: there is no prerequisite data in the
+    extracted requirements, so no artificial chain is imposed. This lets
+    independent work execute in parallel while the dependency model still
+    supports real prerequisites when they exist.
+    """
 
     requirements = state.get("requirements", [])
-    by_id = {requirement.id: requirement for requirement in requirements}
     tasks: list[CandidateTask] = []
 
     for index, requirement in enumerate(requirements, start=1):
@@ -49,15 +55,25 @@ def build_candidate_plan(state: AgentState) -> CandidatePlan:
             "evidence": "small",
             "definition": "small",
         }.get(requirement.category, "small")
-        dependencies = [f"task_{previous}" for previous in range(1, index)]
+        required_approvals: list[str] = []
+        if requirement.category == "approval":
+            required_approvals = ["decision_maker"]
         tasks.append(
-            _template_task(requirement, task_id, f"{category_text}: {requirement.text}", effort, dependencies)
+            _template_task(
+                requirement,
+                task_id,
+                f"{category_text}: {requirement.text}",
+                effort,
+                [],
+                required_approvals,
+            )
         )
 
     return CandidatePlan(
         rationale=(
-            "Tasks are derived from the extracted requirements and ordered "
-            "so that dependencies are satisfied before dependent work begins."
+            "Tasks are derived from the extracted requirements. Tasks carry no "
+            "implicit cross-dependencies; only explicitly declared prerequisites "
+            "order work."
         ),
         assumptions=[
             requirement.text

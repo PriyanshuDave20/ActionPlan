@@ -9,7 +9,7 @@ class Task(BaseModel):
     id: str = Field(min_length=1)
     description: str = Field(min_length=1)
     dependencies: list[str] = Field(default_factory=list)
-    status: Literal["pending", "in_progress", "completed", "blocked"] = "pending"
+    status: Literal["pending", "ready", "in_progress", "completed", "blocked", "cancelled"] = "pending"
     effort: Literal["small", "medium", "large", "high"] = "small"
     role: str | None = None
     owner: str | None = None
@@ -19,6 +19,8 @@ class Task(BaseModel):
     requirement_ids: list[str] = Field(default_factory=list)
     procedure_sources: list[str] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    readiness: Literal["waiting", "ready", "complete", "blocked", "cancelled"] = "waiting"
 
 
 class TaskPlan(BaseModel):

@@ -58,6 +58,44 @@ def test_mock_extract_requirements_returns_four(provider):
     ]
 
 
+def test_mock_chat_json_objective_analysis(provider):
+    prompt = '{"goal": "Ship the product", "people": [{"name": "Ada", "role": "lead"}], "priority": "high"}'
+    result = provider.chat_json(prompt, ObjectiveAnalysis)
+    assert isinstance(result, ObjectiveAnalysis)
+    assert result.objective
+    assert len(result.success_criteria) >= 1
+
+
+def test_mock_chat_json_procedure_extraction(provider):
+    prompt = '{"goal": "Move the office", "people": []}'
+    result = provider.chat_json(prompt, ProcedureExtraction)
+    assert isinstance(result, ProcedureExtraction)
+    assert result.procedures == []
+
+
+def test_mock_chat_json_requirement_extraction(provider):
+    prompt = '{"goal": "Launch the campaign", "people": []}'
+    result = provider.chat_json(prompt, RequirementExtraction)
+    assert isinstance(result, RequirementExtraction)
+    assert len(result.requirements) == 4
+
+
+def test_mock_chat_json_unsupported_schema(provider):
+    class OtherSchema(BaseModel):
+        name: str
+
+    with pytest.raises(ValueError, match="does not support schema"):
+        provider.chat_json('{"goal": "x"}', OtherSchema)
+
+
+def test_mock_chat_json_handles_malformed_prompt(provider):
+    """When the prompt contains no parseable WorkRequest, the mock falls back
+    to defaults instead of crashing."""
+    result = provider.chat_json("no json here at all", ObjectiveAnalysis)
+    assert isinstance(result, ObjectiveAnalysis)
+    assert result.objective
+
+
 class FakeChatModel:
     """Stands in for a ChatOpenAI instance; returns canned messages."""
 

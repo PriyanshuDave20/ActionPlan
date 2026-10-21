@@ -1,8 +1,10 @@
 import json
+import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.models.workflow import WorkflowState, WorkflowSummary
+from app.models.workflow import WorkflowState, WorkflowSummary, WorkflowExecutionState
 
 
 def _now() -> str:
@@ -17,16 +19,18 @@ class LocalMemoryStore:
         self.workflows_dir = self.data_dir / "workflows"
         self.long_term_file = self.data_dir / "long_term_memory.json"
         self._index_file = self.data_dir / "workflows" / "_index.json"
+        self._lock = threading.RLock()  # Use RLock for reentrant locking
         self.workflows_dir.mkdir(parents=True, exist_ok=True)
 
     # -- workflows ------------------------------------------------
 
     def save_workflow(self, workflow: WorkflowState) -> None:
-        payload = workflow.model_dump(mode="json")
-        workflow_file = self.workflows_dir / f"{workflow.workflow_id}.json"
-        with workflow_file.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
-        self._update_index(workflow.workflow_id, workflow.updated_at.isoformat())
+        with self._lock:
+            payload = workflow.model_dump(mode="json")
+            workflow_file = self.workflows_dir / f"{workflow.workflow_id}.json"
+            with workflow_file.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+            self._update_index(workflow.workflow_id, workflow.updated_at.isoformat())
 
     def get_workflow(self, workflow_id: str) -> WorkflowState | None:
         workflow_file = self.workflows_dir / f"{workflow_id}.json"
@@ -82,6 +86,21 @@ class LocalMemoryStore:
         index[workflow_id] = updated_at
         with self._index_file.open("w", encoding="utf-8") as handle:
             json.dump(index, handle, indent=2)
+
+    def claim_workflow_for_execution(self, workflow_id: str, worker_id: str) -> WorkflowState | None:
+        """Atomically claim a workflow for execution using file locking."""
+        with self._lock:
+            workflow = self.get_workflow(workflow_id)
+            if not workflow:
+                return None
+            
+            if workflow.execution_state != WorkflowExecutionState.QUEUED:
+                return None
+            
+            workflow.execution_state = WorkflowExecutionState.RUNNING
+            workflow.updated_at = datetime.now(timezone.utc)
+            self.save_workflow(workflow)
+            return workflow
 
     # -- long-term memory -----------------------------------------
 

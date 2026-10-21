@@ -3,6 +3,8 @@ import type {
   WorkRequestInput,
   WorkflowState,
   WorkflowSummary,
+  WorkflowEvent,
+  WorkflowEvidence,
 } from "./workflow-types";
 
 // Local Vite development can run without a frontend/.env file. Keep the
@@ -81,8 +83,36 @@ function jsonInit(method: string, body: unknown): RequestInit {
 
 export function createGoalRequest(
   input: WorkRequestInput,
+  sync = false,
 ): Promise<WorkflowState> {
-  return requestJson<WorkflowState>("/goals", jsonInit("POST", input));
+  return requestJson<WorkflowState>(`/goals?sync=${sync}`, jsonInit("POST", input));
+}
+
+export async function getWorkflowStatusRequest(
+  workflowId: string,
+): Promise<{ workflow_id: string; execution_state: string; execution_error: string | null; updated_at: string | null }> {
+  return requestJson(`/goals/${encodeURIComponent(workflowId)}/status`);
+}
+
+export async function pollWorkflowUntilComplete(
+  workflowId: string,
+  onProgress?: (state: WorkflowState) => void,
+  maxAttempts = 60,
+  intervalMs = 1000,
+): Promise<WorkflowState> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const workflow = await getWorkflowRequest(workflowId);
+    if (onProgress) onProgress(workflow);
+    
+    if (workflow.execution_state === "completed" || workflow.execution_state === "failed") {
+      return workflow;
+    }
+    
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  
+  // Return the last known state if max attempts reached
+  return getWorkflowRequest(workflowId);
 }
 
 export function continueGoalRequest(
@@ -123,4 +153,16 @@ export function refreshWorkflowRequest(workflowId: string): Promise<WorkflowStat
     `/workflows/${encodeURIComponent(workflowId)}/refresh`,
     { method: "POST" },
   );
+}
+
+export function transitionTaskRequest(workflowId: string, taskId: string, status: string, version: number, reason?: string): Promise<WorkflowState> {
+  return requestJson(`/workflows/${encodeURIComponent(workflowId)}/tasks/${encodeURIComponent(taskId)}/transition`, jsonInit("POST", { status, version, reason }));
+}
+export function submitUpdateRequest(workflowId: string, text: string, version: number): Promise<WorkflowState> {
+  return requestJson(`/workflows/${encodeURIComponent(workflowId)}/updates`, jsonInit("POST", { text, version }));
+}
+export function listEventsRequest(workflowId: string): Promise<WorkflowEvent[]> { return requestJson(`/workflows/${encodeURIComponent(workflowId)}/events`); }
+export function listEvidenceRequest(workflowId: string): Promise<WorkflowEvidence[]> { return requestJson(`/workflows/${encodeURIComponent(workflowId)}/evidence`); }
+export function decideRecommendationRequest(workflowId: string, recommendationId: string, decision: string, version: number, reason?: string): Promise<WorkflowState> {
+  return requestJson(`/workflows/${encodeURIComponent(workflowId)}/recommendations/${encodeURIComponent(recommendationId)}/decision`, jsonInit("POST", { decision, version, reason }));
 }

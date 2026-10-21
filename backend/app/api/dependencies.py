@@ -6,6 +6,7 @@ from app.llm.provider import LLMProvider, create_llm_provider
 from app.memory.interface import MemoryInterface
 from app.rag.factory import create_retriever
 from app.rag.vector_store import VectorRetriever
+from app.workspace import WorkspaceStore
 
 # Lambda execution environments are reused across warm invocations. These
 # module-level singletons let the LangGraph graph, LLM provider, embedding
@@ -16,6 +17,7 @@ _llm_singleton: LLMProvider | None = None
 _retriever_singleton: VectorRetriever | None = None
 _memory_singleton: MemoryInterface | None = None
 _agent_service_singleton: AgentService | None = None
+_workspace_singleton: WorkspaceStore | None = None
 
 
 def _build_llm() -> LLMProvider:
@@ -64,10 +66,18 @@ def get_agent_service(
     return _agent_service_singleton
 
 
+def get_workspace() -> WorkspaceStore:
+    global _workspace_singleton
+    if _workspace_singleton is None:
+        _workspace_singleton = WorkspaceStore(get_settings().resolved_workspace_db_path)
+    return _workspace_singleton
+
+
 def reset_singletons() -> None:
     """Drop cached singletons. Used by tests and local reload paths."""
-    global _llm_singleton, _retriever_singleton, _memory_singleton, _agent_service_singleton
+    global _llm_singleton, _retriever_singleton, _memory_singleton, _agent_service_singleton, _workspace_singleton
     _llm_singleton = None
     _retriever_singleton = None
     _memory_singleton = None
     _agent_service_singleton = None
+    _workspace_singleton = None

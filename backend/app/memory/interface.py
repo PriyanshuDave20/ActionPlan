@@ -21,3 +21,7 @@ class MemoryInterface(Protocol):
 
     def summarize(self) -> WorkflowSummary | None:
         ...
+
+    def claim_workflow_for_execution(self, workflow_id: str, worker_id: str) -> WorkflowState | None:
+        """Atomically claim a workflow for execution. Returns the workflow if successful, None if already claimed."""
+        ...

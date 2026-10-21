@@ -10,6 +10,7 @@ class CandidateTask(BaseModel):
     procedure_id: str | None = None
     effort: Literal["small", "medium", "large", "high"] = "small"
     dependencies: list[str] = Field(default_factory=list)
+    required_approvals: list[str] = Field(default_factory=list)
 
 
 class CandidatePlan(BaseModel):

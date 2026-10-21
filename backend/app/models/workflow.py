@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -23,6 +24,8 @@ class Blocker(BaseModel):
 
 
 class Recommendation(BaseModel):
+    recommendation_id: str = ""
+    workflow_id: str = ""
     action: str
     reason: str
     priority: str = "medium"
@@ -33,6 +36,13 @@ class Recommendation(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     critical_path: list[str] = Field(default_factory=list)
     deadline_pressure: str = "none"
+    affected_task_ids: list[str] = Field(default_factory=list)
+    supporting_evidence: list[Evidence] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    status: Literal["open", "accepted", "rejected", "revision_requested", "stale"] = "open"
+    created_at: datetime = Field(default_factory=utc_now)
+    decided_at: datetime | None = None
+    decision_reason: str | None = None
 
 
 class ContinueRequest(BaseModel):
@@ -54,6 +64,15 @@ class WorkflowSummary(BaseModel):
     completed_tasks: int = 0
     blocker_count: int = 0
     recommendation_action: str | None = None
+
+
+class WorkflowExecutionState(str, Enum):
+    """Execution state of the workflow."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    NEEDS_REVIEW = "needs_review"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class WorkflowState(BaseModel):
@@ -83,4 +102,9 @@ class WorkflowState(BaseModel):
     recommendation: Recommendation | None = None
     memory_context: list[str] = Field(default_factory=list)
     execution_metadata: dict[str, Any] = Field(default_factory=dict)
+    version: int = 1
+    created_at: datetime = Field(default_factory=utc_now)
+    last_assessed_at: datetime | None = None
     updated_at: datetime = Field(default_factory=utc_now)
+    execution_state: WorkflowExecutionState = WorkflowExecutionState.QUEUED
+    execution_error: str | None = None

@@ -6,7 +6,7 @@ def test_create_workflow_with_input_object(components):
     from app.models.work_request import WorkRequestInput
 
     service = AgentService(llm, retriever, memory)
-    workflow = service.create_workflow(
+    workflow = service.create_workflow_sync(
         WorkRequestInput(goal="Prepare the annual audit", deadline=None)
     )
     assert workflow.workflow_id
@@ -16,7 +16,7 @@ def test_create_workflow_with_input_object(components):
 def test_create_workflow_with_string(components):
     llm, retriever, memory, _ = components
     service = AgentService(llm, retriever, memory)
-    workflow = service.create_workflow("Deploy the staging environment")
+    workflow = service.create_workflow_sync("Deploy the staging environment")
     assert workflow.workflow_id
     assert workflow.original_goal == "Deploy the staging environment"
 
@@ -24,7 +24,7 @@ def test_create_workflow_with_string(components):
 def test_continue_marks_task_completed(components):
     llm, retriever, memory, _ = components
     service = AgentService(llm, retriever, memory)
-    workflow = service.create_workflow("Migrate the database")
+    workflow = service.create_workflow_sync("Migrate the database")
     first = workflow.tasks[0]
     from app.models.workflow import WorkflowState
 
@@ -43,7 +43,7 @@ def test_continue_returns_none_for_unknown_id(components):
 def test_list_summaries(components):
     llm, retriever, memory, _ = components
     service = AgentService(llm, retriever, memory)
-    service.create_workflow("Recruit an intern")
+    service.create_workflow_sync("Recruit an intern")
     summaries = service.list_workflows()
     assert summaries
     assert summaries[0].goal == "Recruit an intern"
@@ -53,7 +53,7 @@ def test_list_summaries(components):
 def test_workflow_persists_to_memory(components):
     llm, retriever, memory, _ = components
     service = AgentService(llm, retriever, memory)
-    workflow = service.create_workflow("Update the policy handbook")
+    workflow = service.create_workflow_sync("Update the policy handbook")
     stored = memory.get_workflow(workflow.workflow_id)
     assert stored is not None
     assert stored.original_goal == "Update the policy handbook"

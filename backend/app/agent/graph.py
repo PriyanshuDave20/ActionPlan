@@ -10,7 +10,12 @@ from app.agent.nodes.goal_analysis import (
 )
 from app.agent.nodes.initialization import initialize_node
 from app.agent.nodes.memory import update_memory_node
-from app.agent.nodes.plan_validation import should_revise, validate_plan_node, revise_plan_node
+from app.agent.nodes.plan_validation import (
+    plan_failed_node,
+    should_revise,
+    validate_plan_node,
+    revise_plan_node,
+)
 from app.agent.nodes.planning import create_plan_node
 from app.agent.nodes.recommendation import recommendation_node
 from app.agent.nodes.state_analysis import state_analysis_node
@@ -40,6 +45,7 @@ def build_graph(
     graph.add_node("plan", create_plan_node)
     graph.add_node("validate_plan", validate_plan_node)
     graph.add_node("revise_plan", revise_plan_node)
+    graph.add_node("plan_failed", plan_failed_node)
     graph.add_node("execute_plan", execute_plan_node)
     graph.add_node("optimize_plan", optimize_plan_node)
     graph.add_node("state_analysis", state_analysis_node)
@@ -56,9 +62,10 @@ def build_graph(
     graph.add_conditional_edges(
         "validate_plan",
         should_revise,
-        {"revise_plan": "revise_plan", "execute_plan": "execute_plan"},
+        {"revise_plan": "revise_plan", "execute_plan": "execute_plan", "plan_failed": "plan_failed"},
     )
     graph.add_edge("revise_plan", "plan")
+    graph.add_edge("plan_failed", "update_memory")
     graph.add_edge("execute_plan", "optimize_plan")
     graph.add_edge("optimize_plan", "state_analysis")
     graph.add_edge("state_analysis", "detect_blockers")

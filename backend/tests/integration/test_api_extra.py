@@ -16,7 +16,7 @@ def _client(components) -> TestClient:
 def test_create_goal_full_contract(components):
     client = _client(components)
     response = client.post(
-        "/goals",
+        "/goals?sync=true",
         json={
             "goal": "Prepare Project Alpha",
             "people_involved": [{"name": "Ada", "role": "lead"}],
@@ -46,7 +46,7 @@ def test_create_goal_full_contract(components):
 
     task = body["tasks"][0]
     assert "id" in task
-    assert task["status"] == "pending"
+    assert task["status"] == "ready"
     assert task["effort"] in {"small", "medium", "large", "high"}
     assert body["work_request"]["goal"] == "Prepare Project Alpha"
     assert body["work_request"]["priority"] == "high"
@@ -55,7 +55,7 @@ def test_create_goal_full_contract(components):
 
 def test_continue_endpoint_completes_task(components):
     client = _client(components)
-    created = client.post("/goals", json={"goal": "Ship the feature"}).json()
+    created = client.post("/goals?sync=true", json={"goal": "Ship the feature"}).json()
     workflow_id = created["workflow_id"]
     task_id = created["tasks"][0]["id"]
     response = client.post(f"/goals/{workflow_id}/continue", json={"completed_task_ids": [task_id]})
@@ -68,7 +68,7 @@ def test_continue_endpoint_completes_task(components):
 
 def test_continue_endpoint_accepts_empty_body(components):
     client = _client(components)
-    created = client.post("/goals", json={"goal": "Plan the retro"}).json()
+    created = client.post("/goals?sync=true", json={"goal": "Plan the retro"}).json()
     workflow_id = created["workflow_id"]
     response = client.post(f"/goals/{workflow_id}/continue", json={})
     assert response.status_code == 200
@@ -90,7 +90,7 @@ def test_documents_ingest_endpoint(components):
 
 def test_workflows_list_and_detail(components):
     client = _client(components)
-    created = client.post("/goals", json={"goal": "Organize the offsite"}).json()
+    created = client.post("/goals?sync=true", json={"goal": "Organize the offsite"}).json()
     workflow_id = created["workflow_id"]
     summaries = client.get("/workflows").json()
     assert any(item["workflow_id"] == workflow_id for item in summaries)

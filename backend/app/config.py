@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str | None = None
 
+    # Optional chat template kwargs passed through extra_body to the LLM
+    # endpoint. Only included when explicitly configured, to avoid sending
+    # provider-specific parameters (e.g. enable_thinking) that an
+    # OpenAI-compatible endpoint may reject.
+    llm_chat_template_kwargs: dict | None = None
+
     # LangSmith
     langchain_tracing_v2: bool = False
     langsmith_api_key: str | None = None
@@ -50,6 +56,11 @@ class Settings(BaseSettings):
 
     # Application data
     data_dir: Path = _BACKEND_ROOT / "data"
+    workspace_db_path: Path | None = None
+
+    @property
+    def resolved_workspace_db_path(self) -> Path:
+        return self.workspace_db_path or self.data_dir / "workspace.sqlite3"
 
     # Web frontend (optional static hosting)
     frontend_dir: Path = _BACKEND_ROOT.parent / "frontend" / "dist"
@@ -127,4 +138,57 @@ def _apply_runtime_env(settings: Settings) -> None:
 def get_settings() -> Settings:
     settings = Settings()
     _apply_runtime_env(settings)
+    validate_settings(settings)
     return settings
+
+
+def validate_settings(settings: Settings) -> None:
+    """Validate required runtime configuration for the configured providers.
+
+    Raises ``ValueError`` with a clear message naming the missing setting
+    (never its value) when a required credential or endpoint is absent.
+    """
+    provider = settings.llm_provider.lower().strip()
+    if provider in {"nvidia", "openai", "openai-compatible"}:
+        if not settings.resolved_llm_model:
+            raise ValueError(
+                "LLM_MODEL is required when LLM_PROVIDER is "
+                f"'{provider}' (or set OPENAI_MODEL)."
+            )
+        if not settings.resolved_llm_api_key:
+            raise ValueError(
+                "LLM_API_KEY is required when LLM_PROVIDER is "
+                f"'{provider}' (or set OPENAI_API_KEY)."
+            )
+        if not settings.resolved_llm_base_url:
+            raise ValueError(
+                "LLM_BASE_URL is required when LLM_PROVIDER is "
+                f"'{provider}' (or set OPENAI_BASE_URL)."
+            )
+
+    if settings.vector_store == "zilliz":
+        if not settings.zilliz_uri:
+            raise ValueError("ZILLIZ_URI is required when VECTOR_STORE is 'zilliz'.")
+        if not settings.zilliz_token:
+            raise ValueError("ZILLIZ_TOKEN is required when VECTOR_STORE is 'zilliz'.")
+
+    if settings.memory_backend == "dynamodb":
+        if not settings.aws_region:
+            raise ValueError("AWS_REGION is required when MEMORY_BACKEND is 'dynamodb'.")
+        if not settings.dynamodb_table_name:
+            raise ValueError(
+                "DYNAMODB_TABLE_NAME is required when MEMORY_BACKEND is 'dynamodb'."
+            )
+
+    if settings.embedding_provider == "nvidia":
+        if not settings.embedding_model:
+            raise ValueError(
+                "EMBEDDING_MODEL is required when EMBEDDING_PROVIDER is 'nvidia'."
+            )
+        if not settings.resolved_embedding_api_key:
+            raise ValueError(
+                "An embedding API key is required when EMBEDDING_PROVIDER is "
+                "'nvidia' (set EMBEDDING_API_KEY, EMBEDDING_MODEL_API, "
+                "OPENAI_API_KEY, or LLM_API_KEY)."
+            )
+

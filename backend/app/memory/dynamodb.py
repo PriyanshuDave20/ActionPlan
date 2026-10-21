@@ -1,12 +1,15 @@
 import json
+import uuid
+from datetime import datetime, timezone
 
 import boto3
 from botocore.exceptions import ClientError
 
 from app.config import Settings
-from app.models.workflow import WorkflowState
+from app.models.workflow import WorkflowState, WorkflowExecutionState
 
 _PRIMARY_KEY = "workflow_id"
+_EXECUTION_LOCK_KEY = "execution_lock"
 
 
 class DynamoDBMemoryStore:
@@ -106,6 +109,48 @@ class DynamoDBMemoryStore:
         from app.agent.service import _to_summary
 
         return _to_summary(workflows[0])
+
+    def claim_workflow_for_execution(self, workflow_id: str, worker_id: str) -> WorkflowState | None:
+        """Atomically claim a workflow for execution using optimistic locking.
+        
+        Only claims workflows in QUEUED state. Returns the workflow if successful,
+        None if the workflow doesn't exist, isn't queued, or was already claimed.
+        """
+        try:
+            response = self.table.get_item(Key={_PRIMARY_KEY: workflow_id})
+        except ClientError:
+            return None
+        item = response.get("Item")
+        if not item:
+            return None
+        
+        workflow = WorkflowState.model_validate(item)
+        
+        # Only claim workflows that are queued
+        if workflow.execution_state != WorkflowExecutionState.QUEUED:
+            return None
+        
+        # Try to claim using conditional update
+        try:
+            self.table.update_item(
+                Key={_PRIMARY_KEY: workflow_id},
+                UpdateExpression="SET execution_state = :running, execution_lock = :lock, updated_at = :now",
+                ConditionExpression="execution_state = :queued AND (attribute_not_exists(execution_lock) OR execution_lock = :lock)",
+                ExpressionAttributeValues={
+                    ":running": WorkflowExecutionState.RUNNING.value,
+                    ":queued": WorkflowExecutionState.QUEUED.value,
+                    ":lock": worker_id,
+                    ":now": datetime.now(timezone.utc).isoformat(),
+                },
+                ReturnValues="ALL_NEW",
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return None
+            raise
+        
+        # Fetch the updated workflow
+        return self.get_workflow(workflow_id)
 
 
 def create_memory_store(settings: Settings):

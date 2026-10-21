@@ -95,7 +95,10 @@ def validate_plan(
         matching = [
             task for task in tasks if task.requirement_id == requirement.id
         ]
-        if not matching or not any("approval" in task.description.lower() for task in matching):
+        has_approval_step = any(
+            bool(task.required_approvals) for task in matching
+        )
+        if not matching or not has_approval_step:
             missing_approvals.append(requirement.id)
             errors.append(
                 ValidationIssue(

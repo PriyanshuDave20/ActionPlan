@@ -255,7 +255,7 @@ def main() -> int:
         # --- create the workflow (full LangGraph run) --------------------
         started = time.perf_counter()
         r = client.post(
-            "/goals",
+            "/goals?sync=true",
             json={
                 "goal": GOAL,
                 "people_involved": [{"name": "Ada", "role": "lead"}],
@@ -340,7 +340,7 @@ def main() -> int:
         if tasks:
             t = tasks[0]
             c.check("task id not task_id", "id" in t and "task_id" not in t)
-            c.check("task status pending", t.get("status") == "pending", t.get("status"))
+            c.check("task status ready", t.get("status") == "ready", t.get("status"))
             c.check("task effort valid", t.get("effort") in {"small", "medium", "large", "high"}, t.get("effort"))
 
         pv = body.get("plan_validation") or {}

@@ -1,10 +1,11 @@
 from uuid import uuid4
+import threading
 
 from app.agent.graph import build_graph
 from app.agent.state import AgentState
 from app.memory.interface import MemoryInterface
 from app.models.work_request import WorkRequestInput
-from app.models.workflow import WorkflowState, WorkflowSummary
+from app.models.workflow import WorkflowState, WorkflowSummary, WorkflowExecutionState
 
 
 def _generate_workflow_id(goal: str) -> str:
@@ -13,31 +14,126 @@ def _generate_workflow_id(goal: str) -> str:
     return f"wf_{slug or 'goal'}_{uuid4().hex[:8]}"
 
 
+def _worker_id() -> str:
+    """Generate a unique worker ID for this process."""
+    return f"worker-{uuid4().hex[:8]}"
+
+
 class AgentService:
     def __init__(self, llm, retriever, memory: MemoryInterface) -> None:
         self.llm = llm
         self.retriever = retriever
         self.memory = memory
         self.graph = build_graph(llm, retriever, memory)
+        self._worker_id = f"worker-{uuid4().hex[:8]}"
 
     def create_workflow(self, goal_or_input: str | WorkRequestInput) -> WorkflowState:
+        """Create a new workflow in QUEUED state and return it immediately.
+        
+        The actual execution will be triggered asynchronously via the queue worker.
+        """
         if isinstance(goal_or_input, str):
             payload = WorkRequestInput(goal=goal_or_input)
         else:
             payload = goal_or_input
 
         workflow_id = _generate_workflow_id(payload.goal)
-        initial_state: AgentState = {
+        
+        # Create workflow in QUEUED state
+        workflow = WorkflowState(
+            workflow_id=workflow_id,
+            original_goal=payload.goal,
+            work_request=None,  # Will be populated during execution
+            execution_state=WorkflowExecutionState.QUEUED,
+        )
+        
+        # Save the workflow to memory
+        self.memory.save_workflow(workflow)
+        
+        # Trigger async execution (will be handled by queue worker)
+        self._trigger_async_execution(workflow_id=workflow.workflow_id, payload=payload)
+        
+        return workflow
+
+    def create_workflow_sync(self, goal_or_input: str | WorkRequestInput) -> WorkflowState:
+        """Create and execute a workflow synchronously (for testing)."""
+        if isinstance(goal_or_input, str):
+            payload = WorkRequestInput(goal=goal_or_input)
+        else:
+            payload = goal_or_input
+
+        workflow_id = _generate_workflow_id(payload.goal)
+        
+        # Create workflow in QUEUED state
+        workflow = WorkflowState(
+            workflow_id=workflow_id,
+            original_goal=payload.goal,
+            work_request=None,
+            execution_state=WorkflowExecutionState.QUEUED,
+        )
+        
+        self.memory.save_workflow(workflow)
+        
+        # Execute synchronously
+        return self._execute_workflow_sync(workflow_id, payload)
+
+    def _trigger_async_execution(self, workflow_id: str, payload: WorkRequestInput) -> None:
+        """Trigger async execution of the workflow.
+        
+        In production, this would publish to an SQS queue.
+        For local development, we'll execute synchronously in a background thread.
+        """
+        def execute_in_background():
+            try:
+                self._execute_workflow_sync(workflow_id, payload)
+            except Exception as e:
+                # Mark workflow as failed
+                workflow = self.memory.get_workflow(workflow_id)
+                if workflow:
+                    workflow.execution_state = WorkflowExecutionState.FAILED
+                    workflow.execution_error = str(e)
+                    self.memory.save_workflow(workflow)
+        
+        thread = threading.Thread(target=execute_in_background, daemon=True)
+        thread.start()
+
+    def _execute_workflow_sync(self, workflow_id: str, payload: WorkRequestInput) -> WorkflowState:
+        """Execute the workflow synchronously (used by background worker)."""
+        # Claim the workflow for execution
+        claimed = self.memory.claim_workflow_for_execution(workflow_id, self._worker_id)
+        if not claimed:
+            raise RuntimeError(f"Could not claim workflow {workflow_id} for execution")
+        
+        initial_state = {
             "workflow_id": workflow_id,
             "original_goal": payload.goal,
             "work_request_input": payload,
             "incoming_completed_task_ids": [],
             "completed_tasks": [],
             "plan_revision_count": 0,
-            "execution_metadata": {"created": True},
+            "execution_metadata": {"created": True, "worker_id": self._worker_id},
         }
+        
+        # Run the graph
         result = self.graph.invoke(initial_state)
-        return self._to_workflow_state(result)
+        workflow = self._to_workflow_state(result)
+        workflow.execution_state = WorkflowExecutionState.COMPLETED
+        
+        # Save the completed workflow
+        self.memory.save_workflow(workflow)
+        return workflow
+
+    def execute_queued_workflow(self, workflow_id: str) -> WorkflowState | None:
+        """Execute a queued workflow (called by background worker).
+        
+        This method claims the workflow and executes it. Returns the completed
+        workflow state or None if the workflow couldn't be claimed.
+        """
+        workflow = self.memory.get_workflow(workflow_id)
+        if not workflow:
+            return None
+        payload = WorkRequestInput(goal=workflow.original_goal)
+        return self._execute_workflow_sync(workflow_id, payload)
 
     def rebuild_workflow(self, workflow: WorkflowState) -> WorkflowState:
         """Re-run analysis for an existing workflow, preserving its identity and attachments."""

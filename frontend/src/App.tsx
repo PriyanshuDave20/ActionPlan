@@ -8,6 +8,12 @@ listWorkflowsRequest,
 checkBackendHealth,
   ingestDocumentRequest,
   refreshWorkflowRequest,
+  transitionTaskRequest,
+  submitUpdateRequest,
+  listEventsRequest,
+  listEvidenceRequest,
+  decideRecommendationRequest,
+  pollWorkflowUntilComplete,
 type BackendStatus,
 } from "./api/client";
 import type { WorkflowSummary } from "./api/workflow-types";
@@ -87,43 +93,57 @@ const [progress, setProgress] = useState("");
 const [error, setError] = useState<string | null>(null);
 
 async function handleSubmit(event: React.FormEvent) {
-event.preventDefault();
+  event.preventDefault();
 
-if (!goal.trim()) {
-  return;
-}
-
-setSubmitting(true);
-setError(null);
-
-try {
-  let workflowId = createdWorkflowId;
-  if (!workflowId) {
-    setProgress("Building your project plan…");
-    const workflow = await createGoalRequest({ goal: goal.trim() });
-    workflowId = workflow.workflow_id;
-    setCreatedWorkflowId(workflowId);
+  if (!goal.trim()) {
+    return;
   }
 
-  const remainingFiles = files.filter((file) => !uploadedFiles.includes(file.name));
-  for (let index = 0; index < remainingFiles.length; index += 1) {
-    const file = remainingFiles[index];
-    setProgress(`Adding document ${index + 1} of ${remainingFiles.length}…`);
-    await ingestDocumentRequest(file, workflowId);
-    setUploadedFiles((current) => [...current, file.name]);
-  }
+  setSubmitting(true);
+  setError(null);
 
-  if (remainingFiles.length > 0) {
-    setProgress("Updating the plan with your documents…");
-    await refreshWorkflowRequest(workflowId);
+  try {
+    let workflowId = createdWorkflowId;
+    if (!workflowId) {
+      setProgress("Creating project…");
+      const workflow = await createGoalRequest({ goal: goal.trim() });
+      workflowId = workflow.workflow_id;
+      setCreatedWorkflowId(workflowId);
+    }
+
+    if (workflowId) {
+      setProgress("Building your project plan…");
+      const workflow = await pollWorkflowUntilComplete(workflowId, (state) => {
+        setProgress(`Building your project plan… (${state.execution_state})`);
+      });
+      
+      if (workflow.execution_state === "failed") {
+        throw new Error(workflow.execution_error || "Workflow execution failed");
+      }
+      
+      workflowId = workflow.workflow_id;
+      setCreatedWorkflowId(workflowId);
+    }
+
+    const remainingFiles = files.filter((file) => !uploadedFiles.includes(file.name));
+    for (let index = 0; index < remainingFiles.length; index += 1) {
+      const file = remainingFiles[index];
+      setProgress(`Adding document ${index + 1} of ${remainingFiles.length}…`);
+      await ingestDocumentRequest(file, workflowId);
+      setUploadedFiles((current) => [...current, file.name]);
+    }
+
+    if (remainingFiles.length > 0) {
+      setProgress("Updating the plan with your documents…");
+      await refreshWorkflowRequest(workflowId);
+    }
+    window.location.hash = `#/workflow/${workflowId}`;
+  } catch (reason) {
+    setError(reason instanceof Error ? reason.message : String(reason));
+  } finally {
+    setSubmitting(false);
+    setProgress("");
   }
-  window.location.hash = `#/workflow/${workflowId}`;
-} catch (reason) {
-  setError(reason instanceof Error ? reason.message : String(reason));
-} finally {
-  setSubmitting(false);
-  setProgress("");
-}
 
 }
 
@@ -202,6 +222,9 @@ const [workflow, setWorkflow] = useState<any>(null);
 const [error, setError] = useState<string | null>(null);
 const [completing, setCompleting] = useState(false);
 const [documents, setDocuments] = useState<string[]>([]);
+const [updateText, setUpdateText] = useState("");
+const [events, setEvents] = useState<any[]>([]);
+const [evidence, setEvidence] = useState<any[]>([]);
 
 useEffect(() => {
 let cancelled = false;
@@ -213,6 +236,8 @@ let cancelled = false;
     if (!cancelled) {
       setWorkflow(data);
       setDocuments(data.execution_metadata?.documents ?? []);
+      const [eventData, evidenceData] = await Promise.all([listEventsRequest(workflowId), listEvidenceRequest(workflowId)]);
+      if (!cancelled) { setEvents(eventData); setEvidence(evidenceData); }
     }
   } catch (reason) {
     if (!cancelled) {
@@ -233,6 +258,7 @@ async function handleContinue() {
 if (!workflow) {
 return;
 }
+
 setCompleting(true);
 setError(null);
 
@@ -248,6 +274,22 @@ try {
   setError(reason instanceof Error ? reason.message : String(reason));
   setCompleting(false);
 }
+}
+
+async function transitionTask(taskId: string, status: string) {
+  if (!workflow) return;
+  try { setWorkflow(await transitionTaskRequest(workflow.workflow_id, taskId, status, workflow.version)); }
+  catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+}
+async function submitUpdate(event: React.FormEvent) {
+  event.preventDefault(); if (!workflow || !updateText.trim()) return;
+  try { const next = await submitUpdateRequest(workflow.workflow_id, updateText.trim(), workflow.version); setWorkflow(next); setUpdateText(""); setEvents(await listEventsRequest(workflow.workflow_id)); }
+  catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+}
+async function decide(decision: string) {
+  if (!workflow?.recommendation?.recommendation_id) return;
+  try { setWorkflow(await decideRecommendationRequest(workflow.workflow_id, workflow.recommendation.recommendation_id, decision, workflow.version)); }
+  catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
 }
 
 if (error) {
@@ -323,6 +365,8 @@ return (
           Deadline pressure: {workflow.recommendation.deadline_pressure}
         </span>
       </div>
+      <p className="muted">Review status: {workflow.recommendation.status ?? "open"}. Accepting records your decision; it does not execute an action.</p>
+      {workflow.recommendation.recommendation_id && workflow.recommendation.status === "open" ? <div className="action-row"><button className="primary" type="button" onClick={() => decide("accepted")}>Accept</button><button className="button secondary" type="button" onClick={() => decide("rejected")}>Reject</button><button className="button secondary" type="button" onClick={() => decide("revision_requested")}>Request revision</button></div> : null}
     </div>
   ) : null}
 
@@ -396,13 +440,14 @@ return (
           <th>Task</th>
           <th>Effort</th>
           <th>Dependencies</th>
+          <th>Readiness / action</th>
         </tr>
       </thead>
 
       <tbody>
         {tasks.length === 0 ? (
           <tr>
-            <td colSpan={4} className="muted">
+            <td colSpan={5} className="muted">
               No tasks in the plan.
             </td>
           </tr>
@@ -424,11 +469,21 @@ return (
               <td className="muted">
                 {(task.dependencies ?? []).join(", ") || "—"}
               </td>
+              <td><span className="muted">{task.readiness ?? "waiting"}</span>{task.status === "ready" ? <button type="button" className="link-button" onClick={() => transitionTask(task.id, "in_progress")}>Start</button> : null}{task.status === "in_progress" ? <button type="button" className="link-button" onClick={() => transitionTask(task.id, "completed")}>Complete</button> : null}</td>
             </tr>
           ))
         )}
       </tbody>
     </table>
+  </div>
+
+  <div className="card">
+    <h3>Update this workflow</h3><p className="muted">Your update is recorded as user-provided information for reassessment. It does not automatically complete work.</p>
+    <form className="update-form" onSubmit={submitUpdate}><textarea value={updateText} onChange={(event) => setUpdateText(event.target.value)} placeholder="e.g. The test environment is unavailable." rows={3}/><button className="primary" type="submit">Submit update</button></form>
+  </div>
+  <div className="workspace-grid">
+    <div className="card"><h3>Evidence</h3>{evidence.length ? <ul className="plain-list">{evidence.map((item, index) => <li key={index}><strong>{item.source || "Source"}</strong>{item.page ? ` · page ${item.page}` : ""}<br />{item.content}</li>)}</ul> : <p className="muted">No organizational evidence was retrieved. This is uncertainty, not proof that no policy exists.</p>}</div>
+    <div className="card"><h3>History</h3>{events.length ? <ul className="plain-list">{events.map((item) => <li key={item.event_id}><strong>{item.event_type.replaceAll("_", " ")}</strong><br /><span className="muted">{new Date(item.occurred_at).toLocaleString()} · v{item.version ?? "—"}</span></li>)}</ul> : <p className="muted">No history yet.</p>}</div>
   </div>
 
   {workflow.detected_blockers?.length ? (
