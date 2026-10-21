@@ -101,11 +101,44 @@ export async function pollWorkflowUntilComplete(
   intervalMs = 1000,
 ): Promise<WorkflowState> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const workflow = await getWorkflowRequest(workflowId);
-    if (onProgress) onProgress(workflow);
+    const statusData = await getWorkflowStatusRequest(workflowId);
     
-    if (workflow.execution_state === "completed" || workflow.execution_state === "failed") {
-      return workflow;
+    // Create a minimal workflow object for progress callback
+    const progressState: WorkflowState = {
+      workflow_id: workflowId,
+      original_goal: "",
+      execution_state: statusData.execution_state as WorkflowState["execution_state"],
+      execution_error: statusData.execution_error,
+      work_request: null,
+      objective_analysis: null,
+      goal_analysis: null,
+      planner_steps: [],
+      procedure_analysis: null,
+      procedures: [],
+      requirements: [],
+      candidate_plan: null,
+      plan_validation: null,
+      plan_revision_count: 0,
+      optimization: null,
+      tasks: [],
+      completed_tasks: [],
+      blocked_tasks: [],
+      current_task: null,
+      current_state: {},
+      retrieved_documents: [],
+      detected_blockers: [],
+      recommendation: null,
+      memory_context: [],
+      execution_metadata: {},
+      version: 1,
+      last_assessed_at: null,
+    };
+    
+    if (onProgress) onProgress(progressState);
+    
+    if (statusData.execution_state === "completed" || statusData.execution_state === "failed") {
+      // Fetch the full workflow data
+      return getWorkflowRequest(workflowId);
     }
     
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
