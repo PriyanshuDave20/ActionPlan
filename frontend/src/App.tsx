@@ -227,6 +227,7 @@ const [documents, setDocuments] = useState<string[]>([]);
 const [updateText, setUpdateText] = useState("");
 const [events, setEvents] = useState<any[]>([]);
 const [evidence, setEvidence] = useState<any[]>([]);
+const [executionState, setExecutionState] = useState<string>("queued");
 
 useEffect(() => {
 let cancelled = false;
@@ -236,6 +237,8 @@ const pollWorkflow = async () => {
     const statusData = await getWorkflowStatusRequest(workflowId);
     
     if (cancelled) return;
+
+    setExecutionState(statusData.execution_state);
 
     if (statusData.execution_state === "queued" || statusData.execution_state === "running") {
       // Still processing, poll again
@@ -317,7 +320,7 @@ if (error) {
 return (
 <section className="page">
 <p className="eyebrow">PROJECT UNAVAILABLE</p>
-<h1>We couldn’t open this project.</h1>
+<h1>We couldn't open this project.</h1>
 <ErrorBanner message={error} />
 <button type="button" className="primary" onClick={() => navigate("history")}>Back to projects</button>
 </section>
@@ -325,7 +328,20 @@ return (
 }
 
 if (!workflow) {
-return <Loading />;
+const statusText = executionState === "queued" ? "Queued..." : executionState === "running" ? "Building your project plan..." : executionState === "needs_review" ? "Awaiting review..." : "Loading...";
+return (
+<section className="page">
+<div className="card">
+  <div className="meta-row">
+    <div className="status status-checking">
+      <span className="status-dot"></span>
+      <span>{statusText}</span>
+    </div>
+  </div>
+</div>
+  <p className="muted">This may take a minute while we analyze your project and build the plan.</p>
+</section>
+);
 }
 
 const tasks = workflow.tasks ?? [];
