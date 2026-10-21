@@ -14,6 +14,7 @@ checkBackendHealth,
   listEvidenceRequest,
   decideRecommendationRequest,
   pollWorkflowUntilComplete,
+  getWorkflowStatusRequest,
 type BackendStatus,
 } from "./api/client";
 import type { WorkflowSummary } from "./api/workflow-types";
@@ -229,15 +230,32 @@ const [evidence, setEvidence] = useState<any[]>([]);
 useEffect(() => {
 let cancelled = false;
 
-(async () => {
+const pollWorkflow = async () => {
   try {
-    const data = await getWorkflowRequest(workflowId);
+    const statusData = await getWorkflowStatusRequest(workflowId);
+    
+    if (cancelled) return;
 
+    if (statusData.execution_state === "queued" || statusData.execution_state === "running") {
+      // Still processing, poll again
+      setTimeout(pollWorkflow, 1000);
+      return;
+    }
+
+    // Workflow completed or failed, fetch full data
+    const data = await getWorkflowRequest(workflowId);
+    
     if (!cancelled) {
       setWorkflow(data);
       setDocuments(data.execution_metadata?.documents ?? []);
-      const [eventData, evidenceData] = await Promise.all([listEventsRequest(workflowId), listEvidenceRequest(workflowId)]);
-      if (!cancelled) { setEvents(eventData); setEvidence(evidenceData); }
+      const [eventData, evidenceData] = await Promise.all([
+        listEventsRequest(workflowId),
+        listEvidenceRequest(workflowId)
+      ]);
+      if (!cancelled) { 
+        setEvents(eventData); 
+        setEvidence(evidenceData);
+      }
     }
   } catch (reason) {
     if (!cancelled) {
@@ -246,7 +264,9 @@ let cancelled = false;
       );
     }
   }
-})();
+};
+
+pollWorkflow();
 
 return () => {
   cancelled = true;
