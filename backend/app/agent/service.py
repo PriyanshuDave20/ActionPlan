@@ -2,6 +2,7 @@ from uuid import uuid4
 import threading
 import json
 import boto3
+import logging
 
 from app.agent.graph import build_graph
 from app.agent.state import AgentState
@@ -9,6 +10,8 @@ from app.memory.interface import MemoryInterface
 from app.models.work_request import WorkRequestInput
 from app.models.workflow import WorkflowState, WorkflowSummary, WorkflowExecutionState
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _generate_workflow_id(goal: str) -> str:
