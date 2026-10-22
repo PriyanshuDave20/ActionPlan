@@ -1,11 +1,14 @@
 from uuid import uuid4
 import threading
+import json
+import boto3
 
 from app.agent.graph import build_graph
 from app.agent.state import AgentState
 from app.memory.interface import MemoryInterface
 from app.models.work_request import WorkRequestInput
 from app.models.workflow import WorkflowState, WorkflowSummary, WorkflowExecutionState
+from app.config import get_settings
 
 
 def _generate_workflow_id(goal: str) -> str:
@@ -80,9 +83,21 @@ class AgentService:
     def _trigger_async_execution(self, workflow_id: str, payload: WorkRequestInput) -> None:
         """Trigger async execution of the workflow.
         
-        In production, this would publish to an SQS queue.
-        For local development, we'll execute synchronously in a background thread.
+        In production (when WORKFLOW_QUEUE_URL is set), publishes to SQS queue.
+        For local development, executes in a background thread.
         """
+        settings = get_settings()
+        queue_url = settings.workflow_queue_url
+        
+        if queue_url:
+            # Production: send to SQS queue
+            import boto3
+            sqs = boto3.client("sqs", region_name=settings.aws_region)
+            message = json.dumps({"workflow_id": workflow_id, "payload": payload.model_dump()})
+            sqs.send_message(QueueUrl=queue_url, MessageBody=message)
+            return
+        
+        # Local development: execute in background thread
         def execute_in_background():
             try:
                 self._execute_workflow_sync(workflow_id, payload)

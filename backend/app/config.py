@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     # AWS
     aws_region: str = "us-east-2"
     dynamodb_table_name: str = "ActionPlanner"
+    workflow_queue_url: str | None = None
 
     @property
     def resolved_llm_api_key(self) -> str | None:
