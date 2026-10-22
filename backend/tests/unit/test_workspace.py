@@ -43,4 +43,4 @@ def test_rejects_cycle_and_records_events(tmp_path: Path):
     current = store.ensure(workflow())
     with pytest.raises(ValueError):
         store.revise(current, 1, [Task(id="a", description="a", dependencies=["b"]), Task(id="b", description="b", dependencies=["a"])], "cycle")
-    assert store.events("wf_test")[0].event_type == "workflow_created"
+    assert store.events("wf_test")[0].event_type == "workflow_synced"

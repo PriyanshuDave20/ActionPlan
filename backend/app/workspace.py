@@ -79,11 +79,9 @@ class WorkspaceStore:
             """)
 
     def ensure(self, workflow: WorkflowState) -> WorkflowState:
+        """Ensure workflow is in workspace, overwriting any stale data with latest."""
         with self._connection() as db:
-            row = db.execute("SELECT state_json FROM workspace_workflows WHERE workflow_id=?", (workflow.workflow_id,)).fetchone()
-            if row:
-                return WorkflowState.model_validate_json(row["state_json"])
-            self._write(db, workflow, event_type="workflow_created", actor="system")
+            self._write(db, workflow, event_type="workflow_synced", actor="system")
             return workflow
 
     def get_by_idempotency_key(self, idempotency_key: str) -> WorkflowState | None:
