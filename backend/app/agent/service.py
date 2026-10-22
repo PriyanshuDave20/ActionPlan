@@ -94,7 +94,12 @@ class AgentService:
             import boto3
             sqs = boto3.client("sqs", region_name=settings.aws_region)
             message = json.dumps({"workflow_id": workflow_id, "payload": payload.model_dump()})
-            sqs.send_message(QueueUrl=queue_url, MessageBody=message)
+            try:
+                response = sqs.send_message(QueueUrl=queue_url, MessageBody=message)
+                logger.info(f"Sent workflow {workflow_id} to SQS queue, MessageId: {response.get('MessageId')}")
+            except Exception as e:
+                logger.error(f"Failed to send workflow {workflow_id} to SQS: {e}")
+                raise
             return
         
         # Local development: execute in background thread
