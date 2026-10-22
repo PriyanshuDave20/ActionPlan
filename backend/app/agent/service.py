@@ -171,7 +171,9 @@ class AgentService:
             "completed_tasks": workflow.completed_tasks,
             "execution_metadata": workflow.execution_metadata,
         })
-        return self._to_workflow_state(result)
+        rebuilt = self._to_workflow_state(result)
+        rebuilt.execution_state = WorkflowExecutionState.COMPLETED
+        return rebuilt
 
     def continue_workflow(
         self,
