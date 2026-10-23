@@ -181,6 +181,17 @@ class AgentService:
         })
         rebuilt = self._to_workflow_state(result)
         rebuilt.execution_state = WorkflowExecutionState.COMPLETED
+        # The graph's final memory node replaces execution_metadata with a
+        # minimal dict, which drops the ingested-documents list and other
+        # user-added entries. Restore them so the UI keeps showing documents.
+        rebuilt.execution_metadata = {
+            **workflow.execution_metadata,
+            **rebuilt.execution_metadata,
+        }
+        # The graph's memory node already wrote a QUEUED-defaulted copy to
+        # the durable store while invoking. This must be the final write so
+        # the status endpoint reports COMPLETED instead of QUEUED.
+        self.memory.save_workflow(rebuilt)
         return rebuilt
 
     def continue_workflow(
@@ -197,7 +208,17 @@ class AgentService:
         state = self._to_agent_state(workflow)
         state["incoming_completed_task_ids"] = list(completed_task_ids or [])
         result = self.graph.invoke(state)
-        return self._to_workflow_state(result)
+        continued = self._to_workflow_state(result)
+        # The graph's memory node wrote a QUEUED-defaulted copy to the
+        # durable store; persist the corrected state so polling never sees
+        # a regressed workflow. Preserve user-added metadata the same way.
+        continued.execution_state = workflow.execution_state
+        continued.execution_metadata = {
+            **workflow.execution_metadata,
+            **continued.execution_metadata,
+        }
+        self.memory.save_workflow(continued)
+        return continued
 
     def get_workflow(self, workflow_id: str) -> WorkflowState | None:
         return self.memory.get_workflow(workflow_id)

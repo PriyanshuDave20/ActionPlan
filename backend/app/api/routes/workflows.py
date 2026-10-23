@@ -46,9 +46,17 @@ def refresh_workflow(
     service: AgentService = Depends(get_agent_service),
     workspace: WorkspaceStore = Depends(get_workspace),
 ) -> WorkflowState:
-    workflow = _workspace_workflow(workflow_id, service, workspace)
+    # Read the freshest state from the durable store (DynamoDB). The local
+    # SQLite workspace can hold a stale pre-worker copy (no work_request,
+    # no documents, execution_state=QUEUED) that would produce an empty plan
+    # and lose the ingested-document references.
+    workflow = service.get_workflow(workflow_id)
+    if workflow is None:
+        raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found.")
     rebuilt = service.rebuild_workflow(workflow)
-    rebuilt.version = workflow.version
+    # Sync the fresh source into SQLite so the optimistic-version check in
+    # save() passes even if SQLite held a different version.
+    workspace.ensure(workflow)
     try: return workspace.save(rebuilt, workflow.version, "assessment_completed", actor="system")
     except WorkspaceError as error: _raise(error)
 
