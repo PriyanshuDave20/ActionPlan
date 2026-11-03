@@ -83,6 +83,58 @@ function ErrorBanner({ message }: { message: string }) {
   return <div className="card error-card">Error: {message}</div>;
 }
 
+const EFFORT_LABELS: Record<string, string> = {
+  small: "Small",
+  medium: "Medium",
+  large: "Large",
+  high: "Large",
+};
+
+function effortLabel(effort: string | undefined): string {
+  if (!effort) return "—";
+  return EFFORT_LABELS[effort] ?? effort;
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  start_task: "Begin this task",
+  await_dependency: "Waiting on earlier work",
+  no_action: "Nothing needs action right now",
+};
+
+function actionLabel(action: string | undefined): string {
+  if (!action) return "—";
+  return ACTION_LABELS[action] ?? action;
+}
+
+function friendlyStateStatus(status: string): string {
+  if (!status) return "—";
+  if (/execution in progress/i.test(status)) {
+    const match = status.match(/task (\d+) of (\d+)/i);
+    if (match) {
+      return `Your project plan is underway — step ${match[1]} of ${match[2]} is next.`;
+    }
+    return "Your project plan is being prepared.";
+  }
+  if (/all planned tasks are complete/i.test(status)) {
+    return "All planned work is complete.";
+  }
+  if (/no plan produced/i.test(status)) {
+    return "No plan has been produced yet.";
+  }
+  return status;
+}
+
+function friendlyError(reason: unknown): string {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  if (/recommendation not found/i.test(message)) {
+    return (
+      "This suggestion has changed since the page was loaded. " +
+      "Reload the project to see the current recommendation, then try again."
+    );
+  }
+  return message;
+}
+
 function HomePage() {
   const [goal, setGoal] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -302,7 +354,7 @@ function WorkflowPage({ workflowId }: { workflowId: string }) {
 async function decide(decision: string) {
     if (!workflow?.recommendation?.recommendation_id) return;
     try { setWorkflowState(await decideRecommendationRequest(workflow.workflow_id, workflow.recommendation.recommendation_id, decision, workflow.version)); }
-    catch (reason) { setActionError(reason instanceof Error ? reason.message : String(reason)); }
+    catch (reason) { setActionError(friendlyError(reason)); }
   }
 
   const error = pollError ?? actionError;
@@ -427,16 +479,26 @@ async function decide(decision: string) {
     {workflow.recommendation ? (
       <div className="card recommendation-card">
         <h2>
-          Recommended next action:{" "}
-          <code>{workflow.recommendation.action}</code>
+          Recommended next step: {actionLabel(workflow.recommendation.action)}
         </h2>
 
         <p>{workflow.recommendation.reason}</p>
 
         <div className="meta-row">
           <span>
-            Affected task:{" "}
-            <code>{workflow.recommendation.affected_task ?? "—"}</code>
+            Task:{" "}
+            {(() => {
+              const recommendation = workflow.recommendation;
+              if (!recommendation) return "—";
+              const affected = (workflow.tasks ?? []).find(
+                (t: any) => t.id === recommendation.affected_task,
+              );
+              return (
+                <strong>
+                  {affected ? affected.title || affected.description : "—"}
+                </strong>
+              );
+            })()}
           </span>
 
           <span>Priority: {workflow.recommendation.priority}</span>
@@ -463,7 +525,7 @@ async function decide(decision: string) {
 
         <div className="meta-row">
           <span>
-            Status: {String(workflow.current_state.status ?? "—")}
+            Status: {friendlyStateStatus(String(workflow.current_state.status ?? ""))}
           </span>
 
           <span>
@@ -482,14 +544,26 @@ async function decide(decision: string) {
         <div className="meta-row">
           <span>
             Critical path:{" "}
-            <code>
-              {(workflow.optimization.critical_path ?? []).join(" → ") ||
-                "—"}
-            </code>
+            {(() => {
+              const path = workflow.optimization.critical_path ?? [];
+              if (!path.length) return "—";
+              const names = path.map((id: string) => {
+                const t = (workflow.tasks ?? []).find((task: any) => task.id === id);
+                return t ? t.title || t.description : id;
+              });
+              return names.join(" → ");
+            })()}
           </span>
 
           <span>
-            Effort: {workflow.optimization.critical_path_effort ?? 0} units
+            Estimated effort:{" "}
+            {effortLabel(
+              (workflow.optimization.critical_path_effort ?? 0) >= 4
+                ? "large"
+                : (workflow.optimization.critical_path_effort ?? 0) >= 2
+                  ? "medium"
+                  : "small",
+            )}
           </span>
         </div>
       </div>
@@ -549,13 +623,17 @@ async function decide(decision: string) {
                   </td>
 
                   <td>
-                    <code>{task.id}</code> {task.description}
+                    <span className="muted task-ref" title={task.id}>{task.id.replace(/^task_/, "").padStart(2, "0")}</span>{" "}
+                    <span className="task-title">{task.title || task.description}</span>
+                    {task.title && task.description !== task.title ? (
+                      <div className="muted task-desc">{task.description}</div>
+                    ) : null}
                   </td>
 
-                  <td>{task.effort}</td>
+                  <td>{effortLabel(task.effort)}</td>
 
                   <td className="muted">
-                    {(task.dependencies ?? []).join(", ") || "—"}
+                    {(task.dependencies ?? []).map((dep: string) => dep.replace(/^task_/, "")).join(", ") || "—"}
                   </td>
                 </tr>
               );

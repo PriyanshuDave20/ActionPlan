@@ -1,6 +1,7 @@
 from langgraph.graph import END, StateGraph
 
 from app.agent.nodes.blocker_detection import detect_blocker_node
+from app.agent.nodes.document_understanding import understand_documents_node
 from app.agent.nodes.evidence_collection import collect_evidence_node
 from app.agent.nodes.execution import execute_plan_node
 from app.agent.nodes.goal_analysis import (
@@ -16,9 +17,9 @@ from app.agent.nodes.plan_validation import (
     validate_plan_node,
     revise_plan_node,
 )
-from app.agent.nodes.planning import create_plan_node
 from app.agent.nodes.recommendation import recommendation_node
 from app.agent.nodes.state_analysis import state_analysis_node
+from app.agent.nodes.work_breakdown import build_work_breakdown_node
 from app.agent.state import AgentState
 
 
@@ -27,7 +28,7 @@ def build_graph(
     retriever,
     memory,
 ):
-    """Compile the linear advisory workflow into a runnable LangGraph."""
+    """Compile the document-grounded advisory workflow into a runnable graph."""
 
     def bind(node, **deps):
         def wrapper(state: AgentState) -> AgentState:
@@ -38,11 +39,12 @@ def build_graph(
     graph = StateGraph(AgentState)
 
     graph.add_node("initialize_node", initialize_node)
+    graph.add_node("understand_documents", bind(understand_documents_node, llm=llm, retriever=retriever))
     graph.add_node("analyze_goal", bind(analyze_goal_node, llm=llm))
     graph.add_node("extract_procedures", bind(extract_procedures_node, llm=llm))
     graph.add_node("extract_requirements", bind(extract_requirements_node, llm=llm))
     graph.add_node("collect_evidence", bind(collect_evidence_node, retriever=retriever))
-    graph.add_node("plan", create_plan_node)
+    graph.add_node("plan", bind(build_work_breakdown_node, llm=llm))
     graph.add_node("validate_plan", validate_plan_node)
     graph.add_node("revise_plan", revise_plan_node)
     graph.add_node("plan_failed", plan_failed_node)
@@ -53,7 +55,8 @@ def build_graph(
     graph.add_node("recommend", recommendation_node)
     graph.add_node("update_memory", bind(update_memory_node, memory=memory))
 
-    graph.add_edge("initialize_node", "analyze_goal")
+    graph.add_edge("initialize_node", "understand_documents")
+    graph.add_edge("understand_documents", "analyze_goal")
     graph.add_edge("analyze_goal", "extract_procedures")
     graph.add_edge("extract_procedures", "extract_requirements")
     graph.add_edge("extract_requirements", "collect_evidence")

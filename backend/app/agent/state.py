@@ -15,6 +15,7 @@ class AgentState(TypedDict, total=False):
     original_goal: str
     work_request_input: WorkRequestInput
     work_request: WorkRequest
+    project_specification: dict[str, Any]
     objective_analysis: dict[str, Any]
     goal_analysis: dict[str, Any] | None
     planner_steps: list[str]

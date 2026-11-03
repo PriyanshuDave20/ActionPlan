@@ -87,10 +87,16 @@ export interface PlanValidationResult {
 
 export interface Task {
   id: string;
+  title?: string | null;
   description: string;
+  completion_criteria?: string[];
+  deliverable?: string | null;
+  deliverable_refs?: string[];
+  assumptions?: string[];
   dependencies: string[];
   status: TaskStatus;
   effort: EffortLevel;
+  priority?: "low" | "medium" | "high" | null;
   role: string | null;
   owner: string | null;
   mandatory: boolean;

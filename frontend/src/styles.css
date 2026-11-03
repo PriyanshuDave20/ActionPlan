@@ -1202,6 +1202,28 @@ button.primary:disabled,
   color: var(--bad);
 }
 
+/* Task table readability: numeric ref chip + natural-language title. */
+.task-ref {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  text-align: center;
+}
+
+.task-title {
+  font-weight: 600;
+}
+
+.task-desc {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* Status ok/error for backend */
 .status-ok {
   background: rgba(74, 222, 128, 0.15);

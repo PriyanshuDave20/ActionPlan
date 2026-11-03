@@ -1,0 +1,26 @@
+BME 415 Project Proposal
+Sanna & Priyanshu
+
+Title: Comparative analysis of KHDRBS2 wild-type and R168C RNA-binding behaviour using easyCLIP.
+
+Objective: The objective of this project is to determine how the R168C mutation alters the RNA-binding behaviour of the KHDRBS2 protein compared with the wild-type protein.
+
+Research questions: We investigate whether the R168C substitution changes the sequence preferences of KHDRBS2. We compare wild-type and mutant binding sites identified by easyCLIP.
+
+Methodology and approach: We use publicly available easyCLIP datasets for KHDRBS2 wild-type and the R168C mutant. The pipeline consists of adapter trimming, alignment to the transcriptome, peak calling to identify binding sites, and motif analysis. We will analyze replicates separately before merging.
+
+Major activities and steps: First, identify and download the appropriate wild-type and R168C easyCLIP datasets and inspect sample metadata to confirm the number of biological replicates. Then align reads and call peaks to identify binding sites for each condition. Next, annotate identified binding sites by transcript region, for example 3' UTR, coding sequence and introns. We will compare sequence preferences between wild-type and mutant binding sites using motif enrichment analysis. We will identify shared, gained and lost binding sites between the two conditions. Finally, we will interpret the results in the context of known KHDRBS2 biology and prepare the final report.
+
+Deliverables: The final report including figures and interpretation is due at the end of week 10. A short in-class presentation summarizing the comparison of wild-type and R168C binding behaviour will also be given.
+
+Resources: The easyCLIP sequencing datasets are publicly available on GEO. The university computing server and Galaxy are available for the analysis. The Sam68 motif knowledge from the literature will be used as background.
+
+People and responsibilities: Sanna is responsible for the computational pipeline and peak calling. Priyanshu is responsible for motif analysis and annotation of binding sites by transcript region. Both share the interpretation and writing of the final report.
+
+Timeline and milestones: By the end of week 2 the datasets are downloaded and metadata inspected. By week 4 peaks are called for both conditions. By week 6 binding sites are annotated by transcript region. By week 8 the motif comparison between wild-type and mutant is complete. The final report is submitted in week 10.
+
+Constraints: Only publicly available datasets may be used. The analysis must run on the university computing server.
+
+Risks: If the R168C dataset has fewer replicates than the wild-type dataset, the comparison will be limited and the limitation will be discussed in the final report.
+
+Evaluation: The project is graded on the correctness of the analysis, the clarity of the figures, and the interpretation of gained and lost binding sites.

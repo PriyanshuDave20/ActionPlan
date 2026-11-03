@@ -80,6 +80,7 @@ class WorkflowState(BaseModel):
     workflow_id: str
     original_goal: str
     work_request: WorkRequest | None = None
+    project_specification: dict[str, Any] | None = None
     objective_analysis: dict[str, Any] | None = None
     goal_analysis: dict[str, Any] | None = None
     planner_steps: list[str] = Field(default_factory=list)

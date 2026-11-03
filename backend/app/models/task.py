@@ -7,10 +7,16 @@ from app.models.evidence import Evidence
 
 class Task(BaseModel):
     id: str = Field(min_length=1)
+    title: str | None = None  # user-facing name; falls back to description
     description: str = Field(min_length=1)
+    completion_criteria: list[str] = Field(default_factory=list)
+    deliverable: str | None = None
+    deliverable_refs: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
     status: Literal["pending", "ready", "in_progress", "completed", "blocked", "cancelled"] = "pending"
     effort: Literal["small", "medium", "large", "high"] = "small"
+    priority: Literal["low", "medium", "high"] | None = None
     role: str | None = None
     owner: str | None = None
     mandatory: bool = True
@@ -21,6 +27,10 @@ class Task(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     readiness: Literal["waiting", "ready", "complete", "blocked", "cancelled"] = "waiting"
+
+    def display_name(self) -> str:
+        """User-facing name: title when present, otherwise the description."""
+        return self.title or self.description
 
 
 class TaskPlan(BaseModel):

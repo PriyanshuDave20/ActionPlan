@@ -108,6 +108,91 @@ VALID_REQUIREMENTS = json.dumps(
     }
 )
 
+VALID_SPEC = json.dumps(
+    {
+        "title": "Prepare Project Alpha",
+        "project_type": "general",
+        "objective": [
+            {
+                "content": "Prepare Project Alpha for production release.",
+                "source": {"document": "alpha-brief.txt", "page": 1, "passage": "Prepare Project Alpha for production release."},
+                "confidence": 0.9,
+                "kind": "explicit",
+            }
+        ],
+        "major_activities": [
+            {
+                "content": "Complete the Alpha readiness checklist",
+                "source": {"document": "alpha-brief.txt", "page": 1, "passage": "Complete the Alpha readiness checklist"},
+                "confidence": 0.9,
+                "kind": "explicit",
+            },
+            {
+                "content": "Coordinate the launch sign-off",
+                "source": {"document": "alpha-brief.txt", "page": 1, "passage": "Coordinate the launch sign-off"},
+                "confidence": 0.9,
+                "kind": "explicit",
+            },
+        ],
+        "deliverables": [
+            {
+                "content": "Signed launch checklist",
+                "source": {"document": "alpha-brief.txt", "page": 1, "passage": "Signed launch checklist"},
+                "confidence": 0.9,
+                "kind": "explicit",
+            }
+        ],
+        "missing_information": ["No deadline is stated in the provided documents."],
+        "search_queries": ["project alpha readiness"],
+    }
+)
+
+VALID_BREAKDOWN = json.dumps(
+    {
+        "project_type": "general",
+        "phases": [
+            {
+                "id": "phase_1",
+                "name": "Alpha launch preparation",
+                "description": "Work derived from the Alpha brief.",
+                "task_ids": ["task_1", "task_2"],
+            }
+        ],
+        "tasks": [
+            {
+                "id": "task_1",
+                "title": "Complete the Alpha readiness checklist",
+                "description": "Work through the readiness checklist from the Alpha brief and record the results.",
+                "completion_criteria": ["Checklist fully completed and stored."],
+                "deliverable": "Signed launch checklist",
+                "deliverable_refs": ["0"],
+                "dependencies": [],
+                "effort": "medium",
+                "priority": "high",
+                "phase": "phase_1",
+                "evidence_passages": ["Complete the Alpha readiness checklist"],
+                "assumptions": [],
+                "requirement_ids": ["req_1"],
+            },
+            {
+                "id": "task_2",
+                "title": "Coordinate the launch sign-off",
+                "description": "Collect sign-off from the Alpha decision makers before launch.",
+                "completion_criteria": ["Written sign-off recorded."],
+                "dependencies": ["task_1"],
+                "effort": "small",
+                "priority": "high",
+                "phase": "phase_1",
+                "evidence_passages": ["Coordinate the launch sign-off"],
+                "assumptions": [],
+                "requirement_ids": ["req_2"],
+            },
+        ],
+        "assumptions": [],
+        "open_questions": [],
+    }
+)
+
 
 class StubNIM:
     """Mimics the previous NVIDIA failure: echo the schema once, then comply.
@@ -122,7 +207,11 @@ class StubNIM:
         self.echoed = set()
 
     def response_for(self, prompt: str) -> str:
-        if "ProcedureExtraction" in prompt:
+        if "extract a structured specification" in prompt.lower():
+            key, valid = "ProjectSpecification", VALID_SPEC
+        elif "hierarchical work breakdown" in prompt.lower():
+            key, valid = "WorkBreakdown", VALID_BREAKDOWN
+        elif "ProcedureExtraction" in prompt:
             key, valid = "ProcedureExtraction", VALID_PROCEDURES
         elif "RequirementExtraction" in prompt:
             key, valid = "RequirementExtraction", VALID_REQUIREMENTS
@@ -356,16 +445,16 @@ def main() -> int:
         if stub is not None:
             c.check(
                 "model echoed the schema (bug reproduced)",
-                len(stub.echoed) == 3,
+                len(stub.echoed) == 5,
                 f"echoed={sorted(stub.echoed)}",
             )
             c.check(
-                "each schema needed exactly one corrective retry",
-                len(stub.calls) == 6,
-                f"llm calls={len(stub.calls)} (3 schemas x 2 attempts)",
+                "each schema recovered within the retry budget",
+                len(stub.calls) == 9,
+                f"llm calls={len(stub.calls)} (5 schemas, echo-then-comply)",
             )
             retry_prompts = [p for p in stub.calls if "Your previous response was rejected" in p]
-            c.check("retries carried the reason for rejection", len(retry_prompts) == 3, f"n={len(retry_prompts)}")
+            c.check("retries carried the reason for rejection", len(retry_prompts) == 4, f"n={len(retry_prompts)}")
 
         # --- read routes ---------------------------------------------------
         r = client.get(f"/workflows/{workflow_id}")

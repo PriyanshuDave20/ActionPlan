@@ -317,6 +317,7 @@ class AgentService:
             "original_goal": workflow.original_goal,
             "work_request": workflow.work_request,
             "work_request_input": None,
+            "project_specification": workflow.project_specification,
             "objective_analysis": workflow.objective_analysis,
             "goal_analysis": workflow.goal_analysis,
             "planner_steps": workflow.planner_steps,
@@ -347,6 +348,7 @@ class AgentService:
     def _to_workflow_state(state: AgentState) -> WorkflowState:
         mapping = {
             "work_request": "work_request",
+            "project_specification": "project_specification",
             "objective_analysis": "objective_analysis",
             "goal_analysis": "goal_analysis",
             "planner_steps": "planner_steps",

@@ -11,11 +11,11 @@ def state_analysis_node(state: AgentState) -> AgentState:
     )
 
     if not tasks:
-        status = "No plan produced."
+        status = "No plan has been produced yet."
     elif pending:
-        status = f"Execution in progress: task {len(completed) + 1} of {len(tasks)}."
+        status = f"Your project plan is underway — {len(tasks) - len(pending)} of {len(tasks)} steps complete."
     else:
-        status = "All planned tasks are complete."
+        status = "All planned work is complete."
 
     return {
         "current_state": {

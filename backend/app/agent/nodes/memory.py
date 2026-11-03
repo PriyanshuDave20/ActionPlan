@@ -23,7 +23,14 @@ def schedule_chat_node():
 def update_memory_node(state: AgentState, memory: MemoryInterface) -> AgentState:
     workflow = _state_to_workflow(state)
     memory.save_workflow(workflow)
-    return {"memory_context": _memory_context(workflow), "execution_metadata": {"memory": "saved"}}
+    # Merge, don't clobber: earlier nodes record planning metadata
+    # (project type, topological order, notes) in execution_metadata.
+    merged_metadata = dict(state.get("execution_metadata") or {})
+    merged_metadata["memory"] = "saved"
+    return {
+        "memory_context": _memory_context(workflow),
+        "execution_metadata": merged_metadata,
+    }
 
 
 def _state_to_workflow(state: AgentState) -> WorkflowState:
@@ -35,6 +42,7 @@ def _state_to_workflow(state: AgentState) -> WorkflowState:
     for key in (
         "objective_analysis",
         "goal_analysis",
+        "project_specification",
         "planner_steps",
         "procedure_analysis",
         "procedures",

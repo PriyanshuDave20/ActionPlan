@@ -7,11 +7,39 @@ from pydantic import BaseModel, ValidationError
 
 from app.config import Settings
 from app.models.frames import ObjectiveAnalysis, ProcedureExtraction
+from app.models.project_spec import (
+    EvidenceRef,
+    PlannedTaskDraft,
+    ProjectSpecification,
+    SpecItem,
+    WorkBreakdown,
+    WorkPackageDraft,
+)
 from app.models.requirement import Requirement, RequirementExtraction
 from app.models.work_request import WorkRequest
 
 
 logger = logging.getLogger(__name__)
+
+# Retrieval-context markers used by the deterministic mock extractor: a
+# chunk whose text mentions one of these is routed to the matching spec
+# section. The real LLM performs the same classification with full context.
+_SPEC_MARKERS: dict[str, tuple[str, ...]] = {
+    "objective": ("objective", "aim", "purpose of this project", "we propose"),
+    "research_questions": ("research question", "hypothesis", "we investigate", "we compare"),
+    "scope": ("scope", "in this project we", "we will analyze"),
+    "methodology": ("method", "approach", "pipeline", "we use", "dataset"),
+    "major_activities": ("step", "activity", "we will", "first", "then", "analyze", "compare", "identify"),
+    "deliverables": ("deliverable", "final report", "presentation", "report will"),
+    "milestones": ("milestone", "week", "by the end", "deadline", "due"),
+    "constraints": ("constraint", "must not", "limitation", "only use"),
+    "resources": ("resource", "available", "provided", "dataset", "server"),
+    "people": ("team", "student", "advisor", "responsib", "sanna", "priyanshu"),
+    "deadlines": ("deadline", "due", "submit", "by december", "timeline"),
+    "evaluation_criteria": ("graded", "evaluation", "assessed", "criteria", "rubric"),
+    "dependencies": ("depends on", "requires", "prerequisite", "after"),
+    "risks": ("risk", "if the", "may fail", "fallback", "limitation"),
+}
 
 # Upper bound on tokens generated for any single structured-output call.
 # The schemas used by this agent produce at most a few hundred tokens, so
@@ -34,6 +62,12 @@ class LLMProvider(Protocol):
         ...
 
     def extract_requirements(self, work_request: WorkRequest) -> RequirementExtraction:
+        ...
+
+    def understand_documents(self, goal: str, context: str) -> ProjectSpecification:
+        ...
+
+    def build_work_breakdown(self, spec: ProjectSpecification, requirements: list[Requirement], evidence: str) -> WorkBreakdown:
         ...
 
 
@@ -237,6 +271,167 @@ class MockLLMProvider:
                 ),
             ]
         )
+
+    # -- Document-grounded planning -------------------------------------
+
+    def understand_documents(self, goal: str, context: str) -> ProjectSpecification:
+        """Deterministic spec extraction for local development and tests.
+
+        Parses the structured retrieval context embedded in the prompt (each
+        chunk is delivered as a fenced JSON line) and derives the spec from
+        it. When no document content is present the specification stays
+        essentially empty and ``missing_information`` records what is
+        unknown — nothing is fabricated.
+        """
+        chunks = self._parse_context_chunks(context)
+        spec = ProjectSpecification(title=goal, project_type="general")
+
+        def add(section: str, text: str, document: str, page: int | None) -> None:
+            getattr(spec, section).append(
+                SpecItem(
+                    content=text,
+                    source=EvidenceRef(document=document, page=page),
+                    confidence=0.9,
+                    kind="explicit",
+                )
+            )
+
+        lowered_batches = []
+        for chunk in chunks:
+            text = chunk["text"].lower()
+            document = chunk["document"]
+            page = chunk["page"]
+            for section, markers in _SPEC_MARKERS.items():
+                for marker in markers:
+                    if marker in text:
+                        add(section, chunk["text"][:240], document, page)
+                        break
+            lowered_batches.append(text)
+
+        if chunks:
+            spec.search_queries = [goal] + [chunk["text"][:60] for chunk in chunks[:3]]
+        else:
+            spec.missing_information = [
+                "No project documents were provided; scope, methodology, deliverables, deadlines and responsibilities are unspecified.",
+            ]
+        return spec
+
+    def build_work_breakdown(
+        self,
+        spec: ProjectSpecification,
+        requirements: list[Requirement],
+        evidence: str,
+    ) -> WorkBreakdown:
+        """Deterministic breakdown for local development and tests.
+
+        Grounded in the specification: tasks mirror the extracted major
+        activities and cover the extracted deliverables. With no document
+        evidence it falls back to four goal-scoped starter tasks so the
+        mock path keeps its historical shape.
+        """
+        requirement_ids = [requirement.id for requirement in requirements]
+        approval_requirement = next(
+            (requirement.id for requirement in requirements if requirement.category == "approval"),
+            None,
+        )
+
+        activities = [item.content for item in spec.major_activities]
+        deliverables = [item.content for item in spec.deliverables]
+
+        tasks: list[PlannedTaskDraft] = []
+        if activities:
+            for index, activity in enumerate(activities, start=1):
+                tasks.append(
+                    PlannedTaskDraft(
+                        id=f"task_{index}",
+                        title=activity,
+                        description=f"{activity} (from project documents).",
+                        completion_criteria=[f"{activity} completed and reviewed."],
+                        deliverable=deliverables[index - 1] if index <= len(deliverables) else None,
+                        deliverable_refs=[str(index - 1)] if index <= len(deliverables) else [],
+                        dependencies=[f"task_{index - 1}"] if index > 1 else [],
+                        effort="medium",
+                        priority="high" if index == 1 else "medium",
+                        phase="phase_1",
+                        evidence_passages=[item.source.passage for item in spec.major_activities if item.content == activity][:1],
+                        requirement_ids=[requirement_ids[(index - 1) % len(requirement_ids)]] if requirement_ids else [],
+                    )
+                )
+            if approval_requirement and not any(
+                approval_requirement in task.requirement_ids for task in tasks
+            ):
+                tasks.append(
+                    PlannedTaskDraft(
+                        id=f"task_{len(tasks) + 1}",
+                        title="Obtain stakeholder approval for completed work",
+                        description="Secure documented sign-off from the decision makers identified for this project.",
+                        completion_criteria=["Written approval recorded."],
+                        dependencies=[tasks[-1].id] if tasks else [],
+                        effort="small",
+                        priority="high",
+                        phase="phase_1",
+                        requirement_ids=[approval_requirement],
+                    )
+                )
+        else:
+            goal = spec.title or "the project"
+            starter = [
+                ("Clarify scope and success criteria", f"Confirm the scope, success criteria and constraints for {goal}."),
+                ("Draft the work plan", f"Break {goal} into ordered work packages with owners."),
+                ("Execute the core work", f"Carry out the main work required for {goal}."),
+                ("Review outcomes and close out", f"Verify outcomes against the success criteria for {goal} and record sign-off."),
+            ]
+            for index, (title, description) in enumerate(starter, start=1):
+                tasks.append(
+                    PlannedTaskDraft(
+                        id=f"task_{index}",
+                        title=title,
+                        description=description,
+                        completion_criteria=[f"{title} completed for {goal}."],
+                        dependencies=[f"task_{index - 1}"] if index > 1 else [],
+                        effort="medium" if index in (2, 3) else "small",
+                        priority="medium",
+                        phase="phase_1",
+                        requirement_ids=[requirement_ids[(index - 1) % len(requirement_ids)]] if requirement_ids else [],
+                    )
+                )
+
+        phases = [
+            WorkPackageDraft(
+                id="phase_1",
+                name="Delivery" if activities else "Project delivery",
+                description="Work derived from the project specification.",
+                task_ids=[task.id for task in tasks],
+            )
+        ]
+        return WorkBreakdown(
+            project_type=spec.project_type,
+            phases=phases,
+            tasks=tasks,
+            assumptions=[item.content for item in spec.constraints][:3],
+            open_questions=list(spec.missing_information),
+        )
+
+    def _parse_context_chunks(self, context: str) -> list[dict]:
+        """Parse the fenced JSON chunk lines used in retrieval prompts."""
+        chunks: list[dict] = []
+        for line in context.splitlines():
+            line = line.strip()
+            if not (line.startswith("{") and line.endswith("}")):
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict) and "text" in data:
+                chunks.append(
+                    {
+                        "text": str(data.get("text", "")),
+                        "document": str(data.get("document", "")),
+                        "page": data.get("page"),
+                    }
+                )
+        return chunks
 
 
 _SCHEMA_NOISE_KEYS = frozenset(
@@ -446,8 +641,13 @@ class LangChainStructuredProvider:
     def __init__(self, llm: BaseChatModel) -> None:
         self.llm = llm
 
-    def chat(self, prompt: str) -> str:
-        response = self.llm.invoke(prompt)
+    def chat(self, prompt: str, max_tokens: int | None = None) -> str:
+        if max_tokens is not None and max_tokens != MAX_OUTPUT_TOKENS:
+            # Per-call override: large schemas (e.g. the work breakdown)
+            # legitimately need more room than the global default cap.
+            response = self.llm.bind(max_tokens=max_tokens).invoke(prompt)
+        else:
+            response = self.llm.invoke(prompt)
         content = response.content
         if isinstance(content, str):
             return content
@@ -461,12 +661,18 @@ class LangChainStructuredProvider:
                 parts.append(str(part))
         return "".join(parts)
 
-    def chat_json(self, prompt: str, schema: type[BaseModel], retries: int = 2) -> BaseModel:
+    def chat_json(
+        self,
+        prompt: str,
+        schema: type[BaseModel],
+        retries: int = 2,
+        max_tokens: int | None = None,
+    ) -> BaseModel:
         instruction = _build_instruction(schema)
         last_error: Exception | None = None
 
         for attempt in range(retries + 1):
-            raw = self.chat(instruction + "\n\n" + prompt)
+            raw = self.chat(instruction + "\n\n" + prompt, max_tokens=max_tokens)
             try:
                 parsed = json.loads(_extract_json(raw))
                 _reject_schema_echo(parsed, schema)
@@ -528,6 +734,93 @@ class LangChainStructuredProvider:
         )
         if not isinstance(result, RequirementExtraction):
             raise RuntimeError("extract_requirements returned the wrong schema")
+        return result
+
+    # -- Document-grounded planning -------------------------------------
+
+    def understand_documents(self, goal: str, context: str) -> ProjectSpecification:
+        prompt = (
+            "Project goal:\n"
+            f"{goal}\n\n"
+            "Retrieved project-document excerpts (one JSON object per line; "
+            "document and page identify the source):\n"
+            f"{context}\n\n"
+            "Extract a structured specification of the project described by "
+            "these documents. Rules:\n"
+            "- Every item MUST cite the document, page and a short supporting "
+            "passage it came from. Do not invent facts.\n"
+            "- Mark an item 'inference' only when you derive it from explicit "
+            "content; otherwise 'explicit'.\n"
+            "- If deadlines, budget, methodology or responsibilities are not "
+            "stated anywhere, list them under missing_information instead of "
+            "guessing.\n"
+            "- Classify the project into exactly one type: academic_research, "
+            "software_development, business_initiative, "
+            "operational_improvement, event_planning, product_development, "
+            "or general.\n"
+            "- Include 3-8 search_queries that would retrieve good coverage "
+            "of the underlying documents.\n"
+            "- Extract the concrete major activities the project requires, "
+            "in the project's own terms."
+        )
+        result = self.chat_json(
+            prompt,
+            ProjectSpecification,
+            # Many document chunks produce a large spec; the default cap
+            # truncates the JSON mid-object.
+            max_tokens=4096,
+        )
+        if not isinstance(result, ProjectSpecification):
+            raise RuntimeError("understand_documents returned the wrong schema")
+        return result
+
+    def build_work_breakdown(
+        self,
+        spec: ProjectSpecification,
+        requirements: list[Requirement],
+        evidence: str,
+    ) -> WorkBreakdown:
+        spec_json = spec.model_dump_json()
+        requirements_json = json.dumps(
+            [{"id": r.id, "category": r.category, "text": r.text} for r in requirements]
+        )
+        prompt = (
+            "PROJECT SPECIFICATION (extracted from the project's own "
+            "documents; every item cites its source):\n"
+            f"{spec_json}\n\n"
+            "ORGANIZATIONAL REQUIREMENTS that must be respected:\n"
+            f"{requirements_json}\n\n"
+            "SUPPORTING EVIDENCE retrieved for these requirements:\n"
+            f"{evidence}\n\n"
+            "Produce a hierarchical work breakdown for THIS project:\n"
+            "- 2-6 phases (work packages) appropriate to the project type.\n"
+            "- Tasks that are specific to this project's actual activities, "
+            "objectives and deliverables. A person must know exactly what to "
+            "do from the title alone. BAD: 'Complete project research'. "
+            "GOOD: 'Compare wild-type and R168C binding-site motifs'.\n"
+            "- Ground every task in the specification; where a task relies on "
+            "document content, quote the passage in evidence_passages.\n"
+            "- Reference spec deliverables by their zero-based list index in "
+            "deliverable_refs and restate them in deliverable.\n"
+            "- Propose dependencies between tasks using their ids; only "
+            "declare a dependency when the output of one task is genuinely "
+            "an input of the other.\n"
+            "- Use qualitative effort (small/medium/large). Do not invent "
+            "durations the documents do not support.\n"
+            "- Tag tasks with requirement_ids when they satisfy an "
+            "organizational requirement (approvals must be tagged).\n"
+            "- List assumptions and open questions separately. Do not expand "
+            "the project scope beyond the documents."
+        )
+        result = self.chat_json(
+            prompt,
+            WorkBreakdown,
+            # The breakdown is the largest structured output in the system;
+            # the global cap truncates it mid-JSON on long documents.
+            max_tokens=4096,
+        )
+        if not isinstance(result, WorkBreakdown):
+            raise RuntimeError("build_work_breakdown returned the wrong schema")
         return result
 
 

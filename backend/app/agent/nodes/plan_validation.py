@@ -27,10 +27,13 @@ def validate_plan_node(state: AgentState) -> AgentState:
     if candidate is None:
         return {"plan_validation": None, "execution_metadata": {"validation": "skipped"}}
 
+    from app.agent.nodes.work_breakdown import _spec_from_state
+
     validation = validate_plan(
         candidate_plan=candidate,
         requirements=state.get("requirements", []),
         revision_count=state.get("plan_revision_count", 0),
+        spec=_spec_from_state(state),
     )
     return {
         "plan_validation": validation,
@@ -74,6 +77,36 @@ def revise_plan_node(state: AgentState) -> AgentState:
                 dependencies=[],
             )
         )
+        next_index += 1
+
+    # Cover document-derived deliverables that no task produces.
+    from app.agent.nodes.work_breakdown import _spec_from_state
+
+    spec = _spec_from_state(state)
+    covered_refs = {ref for task in tasks for ref in task.deliverable_refs}
+    covered_texts = {(task.deliverable or "").strip().lower() for task in tasks}
+    deliverables = spec.all_deliverable_texts() if spec else []
+    for index, deliverable in enumerate(deliverables):
+        if str(index) in covered_refs or deliverable.strip().lower() in covered_texts:
+            continue
+        from app.models.plan import CandidateTask
+
+        tasks.append(
+            CandidateTask(
+                task_id=f"task_{next_index}",
+                title=f"Produce deliverable: {deliverable[:80]}",
+                description=(
+                    f"Prepare and finalize the deliverable named in the project "
+                    f"documents: {deliverable}."
+                ),
+                completion_criteria=[f"{deliverable} completed and reviewed."],
+                deliverable=deliverable,
+                deliverable_refs=[str(index)],
+                effort="medium",
+                dependencies=[],
+            )
+        )
+        covered_texts.add(deliverable.strip().lower())
         next_index += 1
 
     # Add explicit approval tasks for approval requirements missing one.

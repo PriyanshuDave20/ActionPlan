@@ -1,4 +1,5 @@
 from app.models.plan import CandidatePlan, PlanValidationResult, ValidationIssue
+from app.models.project_spec import ProjectSpecification
 from app.models.requirement import Requirement
 
 MAX_PLAN_REVISIONS = 1
@@ -32,8 +33,13 @@ def validate_plan(
     candidate_plan: CandidatePlan,
     requirements: list[Requirement],
     revision_count: int,
+    spec: ProjectSpecification | None = None,
 ) -> PlanValidationResult:
-    """Deterministic structural validation of the candidate plan."""
+    """Deterministic structural validation of the candidate plan.
+
+    When a project specification is supplied, deliverable coverage and task
+    grounding are also validated so document-derived work is not dropped.
+    """
 
     tasks = candidate_plan.tasks
     errors: list[ValidationIssue] = []
@@ -110,6 +116,52 @@ def validate_plan(
                 )
             )
 
+    # Document-grounded checks: every extracted deliverable must be covered
+    # by at least one task, and tasks should state how completion is judged.
+    uncovered_deliverables: list[str] = []
+    if spec is not None:
+        deliverables = spec.all_deliverable_texts()
+        if deliverables and tasks:
+            covered_refs = {
+                ref for task in tasks for ref in task.deliverable_refs
+            }
+            covered_texts = {
+                (task.deliverable or "").strip().lower() for task in tasks
+            }
+            for index, deliverable in enumerate(deliverables):
+                if str(index) in covered_refs:
+                    continue
+                if deliverable.strip().lower() in covered_texts:
+                    continue
+                uncovered_deliverables.append(deliverable)
+                errors.append(
+                    ValidationIssue(
+                        code="uncovered_deliverable",
+                        message=(
+                            f"Deliverable '{deliverable}' from the project "
+                            "documents is not produced by any planned task."
+                        ),
+                    )
+                )
+        if tasks:
+            unactionable = [
+                task.task_id
+                for task in tasks
+                if not task.completion_criteria
+                and len(task.description.strip()) < 20
+            ]
+            if unactionable:
+                warnings.append(
+                    ValidationIssue(
+                        code="vague_task_description",
+                        message=(
+                            "Some tasks lack completion criteria and have "
+                            "very short descriptions: "
+                            + ", ".join(unactionable[:5])
+                        ),
+                    )
+                )
+
     if sequencing_violations:
         warnings.append(
             ValidationIssue(
@@ -135,5 +187,6 @@ def validate_plan(
         missing_approvals=missing_approvals,
         sequencing_violations=sequencing_violations,
         uncovered_requirements=uncovered_requirements,
+        uncovered_deliverables=uncovered_deliverables,
         revision_count=revision_count,
     )

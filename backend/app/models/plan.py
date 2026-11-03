@@ -5,10 +5,17 @@ from pydantic import BaseModel, Field
 
 class CandidateTask(BaseModel):
     task_id: str
+    title: str | None = None
     description: str
+    completion_criteria: list[str] = Field(default_factory=list)
+    deliverable: str | None = None
+    deliverable_refs: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
     requirement_id: str | None = None
     procedure_id: str | None = None
     effort: Literal["small", "medium", "large", "high"] = "small"
+    priority: Literal["low", "medium", "high"] | None = None
+    phase: str | None = None
     dependencies: list[str] = Field(default_factory=list)
     required_approvals: list[str] = Field(default_factory=list)
 
@@ -34,4 +41,5 @@ class PlanValidationResult(BaseModel):
     missing_approvals: list[str] = Field(default_factory=list)
     sequencing_violations: list[str] = Field(default_factory=list)
     uncovered_requirements: list[str] = Field(default_factory=list)
+    uncovered_deliverables: list[str] = Field(default_factory=list)
     revision_count: int = 0
