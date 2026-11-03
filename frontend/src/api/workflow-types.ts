@@ -217,6 +217,7 @@ export interface WorkflowSummary {
   last_assessed_at?: string | null;
   deadline: string | null;
   priority: Priority;
+  execution_state: "queued" | "running" | "needs_review" | "completed" | "failed";
   total_tasks: number;
   completed_tasks: number;
   blocker_count: number;

@@ -11,13 +11,30 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 
 def _workspace_workflow(workflow_id: str, service: AgentService, workspace: WorkspaceStore) -> WorkflowState:
+    """Resolve the workflow for read/update routes without executing the agent.
+
+    The durable store (DynamoDB) is authoritative for asynchronously executed
+    workflows: the worker writes COMPLETED there while the local SQLite
+    workspace may still hold the pre-execution QUEUED copy. Prefer whichever
+    copy is newer and keep the workspace in sync so optimistic-version saves
+    (transitions, decisions) continue to work. Purely read-only: never
+    builds or invokes the LangGraph.
+    """
+    local = None
     try:
-        return workspace.get(workflow_id)
+        local = workspace.get(workflow_id)
     except NotFound:
-        legacy = service.get_workflow(workflow_id)
-        if legacy is None:
-            raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found.")
-        return workspace.ensure(legacy)
+        local = None
+
+    durable = service.get_workflow(workflow_id)
+
+    if durable is not None and (local is None or durable.updated_at > local.updated_at):
+        return workspace.ensure(durable)
+    if local is not None:
+        return local
+    if durable is not None:
+        return workspace.ensure(durable)
+    raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found.")
 
 
 def _raise(error: WorkspaceError) -> None:

@@ -1,20 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   continueGoalRequest,
   createGoalRequest,
-  getWorkflowRequest,
   listWorkflowsRequest,
   checkBackendHealth,
   ingestDocumentRequest,
   refreshWorkflowRequest,
   decideRecommendationRequest,
-  pollWorkflowUntilComplete,
-  getWorkflowStatusRequest,
   type BackendStatus,
 } from "./api/client";
 import type { WorkflowSummary } from "./api/workflow-types";
 import { matchRoute, navigate, useHashRoute } from "./lib/useHashRoute";
+import { setPendingUploads, takePendingUploads } from "./lib/pendingUploads";
+import { useWorkflowStatus } from "./lib/useWorkflowPolling";
 
 function Layout({
   children,
@@ -87,8 +86,6 @@ function ErrorBanner({ message }: { message: string }) {
 function HomePage() {
   const [goal, setGoal] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [uploadedFiles, setUploadedFiles] = useState<string[]>([]);
-  const [createdWorkflowId, setCreatedWorkflowId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -104,41 +101,17 @@ function HomePage() {
     setError(null);
 
     try {
-      let workflowId = createdWorkflowId;
-      if (!workflowId) {
-        setProgress("Creating project…");
-        // Async: returns immediately with queued workflow
-        const workflow = await createGoalRequest({ goal: goal.trim() }, false);
-        workflowId = workflow.workflow_id;
-        setCreatedWorkflowId(workflowId);
-      }
+      setProgress("Creating project…");
+      // Async creation: the backend persists a QUEUED workflow, enqueues the
+      // job, and returns immediately. No waiting for the LangGraph run.
+      const workflow = await createGoalRequest({ goal: goal.trim() }, false);
+      const workflowId = workflow.workflow_id;
 
-      if (workflowId) {
-        setProgress("Building your project plan…");
-        const workflow = await pollWorkflowUntilComplete(workflowId, (state) => {
-          setProgress(`Building your project plan… (${state.execution_state})`);
-        });
-        
-        if (workflow.execution_state === "failed") {
-          throw new Error(workflow.execution_error || "Workflow execution failed");
-        }
-        
-        workflowId = workflow.workflow_id;
-        setCreatedWorkflowId(workflowId);
-      }
+      // Hand the selected files to the workflow page, which ingests them
+      // while the plan builds in the background.
+      setPendingUploads(files);
 
-      const remainingFiles = files.filter((file) => !uploadedFiles.includes(file.name));
-      for (let index = 0; index < remainingFiles.length; index += 1) {
-        const file = remainingFiles[index];
-        setProgress(`Adding document ${index + 1} of ${remainingFiles.length}…`);
-        await ingestDocumentRequest(file, workflowId);
-        setUploadedFiles((current) => [...current, file.name]);
-      }
-
-      if (remainingFiles.length > 0) {
-        setProgress("Updating the plan with your documents…");
-        await refreshWorkflowRequest(workflowId);
-      }
+      // Navigate immediately; the workflow page shows live build status.
       window.location.hash = `#/workflow/${workflowId}`;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -168,7 +141,7 @@ function HomePage() {
             onChange={(event) => setGoal(event.target.value)}
             placeholder="e.g. Prepare Project Alpha for production by coordinating launch readiness, approvals, and team handoffs."
             rows={4}
-            disabled={submitting || Boolean(createdWorkflowId)}
+            disabled={submitting}
             required
           />
         </label>
@@ -176,7 +149,7 @@ function HomePage() {
         <div className="initial-documents">
           <div>
             <span className="field-title">Project documents <span className="optional-label">Optional</span></span>
-            <p className="muted">Add policies, briefs, or reference files now. They'll be ingested before your project opens.</p>
+            <p className="muted">Add policies, briefs, or reference files now. They'll be indexed for your project while the plan builds.</p>
           </div>
           <label className={`button secondary initial-upload ${submitting ? "disabled" : ""}`}>
             <span aria-hidden="true">＋</span> Choose files
@@ -184,7 +157,7 @@ function HomePage() {
               type="file"
               accept=".pdf,.txt,.md,.csv"
               multiple
-              disabled={submitting || Boolean(createdWorkflowId)}
+              disabled={submitting}
               onChange={(event) => {
                 const additions = Array.from(event.currentTarget.files ?? []);
                 setFiles((current) => [...current, ...additions.filter((file) => !current.some((existing) => existing.name === file.name))]);
@@ -198,8 +171,7 @@ function HomePage() {
                 <li key={file.name}>
                   <span className="file-mark">DOC</span>
                   <span className="file-name">{file.name}</span>
-                  {uploadedFiles.includes(file.name) ? <span className="file-ready">Added</span> : null}
-                  {!submitting && !createdWorkflowId ? <button type="button" aria-label={`Remove ${file.name}`} onClick={() => setFiles((current) => current.filter((item) => item.name !== file.name))}>×</button> : null}
+                  {!submitting ? <button type="button" aria-label={`Remove ${file.name}`} onClick={() => setFiles((current) => current.filter((item) => item.name !== file.name))}>×</button> : null}
                 </li>
               ))}
             </ul>
@@ -209,90 +181,133 @@ function HomePage() {
         {error ? <ErrorBanner message={error} /> : null}
 
         <button type="submit" className="primary" disabled={submitting}>
-          {submitting ? (progress || "Creating project…") : createdWorkflowId ? "Retry document setup" : "Create project →"}
+          {submitting ? (progress || "Creating project…") : "Create project →"}
         </button>
-        {createdWorkflowId && error ? <button type="button" className="button secondary" onClick={() => { window.location.hash = `#/workflow/${createdWorkflowId}`; }}>Open project anyway</button> : null}
       </form>
     </section>
   );
 }
 
+type DocUploadStatus = { name: string; state: "indexing" | "added" | "error"; message?: string };
+
 function WorkflowPage({ workflowId }: { workflowId: string }) {
-  const [workflow, setWorkflow] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    executionState,
+    executionError,
+    workflow,
+    error: pollError,
+    refresh,
+    setWorkflow: setWorkflowState,
+  } = useWorkflowStatus(workflowId);
+
+  const [actionError, setActionError] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
-  const [documents, setDocuments] = useState<string[]>([]);
-  const [executionState, setExecutionState] = useState<string>("queued");
+  const [retrying, setRetrying] = useState(false);
+  const [docStatuses, setDocStatuses] = useState<DocUploadStatus[]>([]);
+  const [reassessing, setReassessing] = useState(false);
+  const pendingRef = useRef<File[] | null>(null);
+  const ingestionStartedRef = useRef(false);
 
+  const documents = workflow?.execution_metadata?.documents ?? [];
+
+  // After the workflow reaches a terminal state, ingest any documents that
+  // were selected during creation. Documents upload only once the initial
+  // execution is finished, so there is no race with the background worker;
+  // a single controlled reassessment follows successful ingestion.
   useEffect(() => {
-    let cancelled = false;
+    if (!workflow || ingestionStartedRef.current) return;
+    if (pendingRef.current === null) {
+      pendingRef.current = takePendingUploads();
+    }
+    const files = pendingRef.current;
+    if (!files || files.length === 0) return;
+    if (executionState !== "completed" && executionState !== "failed" && executionState !== "needs_review") return;
 
-    const pollWorkflow = async () => {
-      try {
-        const statusData = await getWorkflowStatusRequest(workflowId);
-        
-        if (cancelled) return;
+    ingestionStartedRef.current = true;
 
-        setExecutionState(statusData.execution_state);
-
-        if (statusData.execution_state === "queued" || statusData.execution_state === "running") {
-          // Still processing, poll again
-          setTimeout(pollWorkflow, 1000);
-          return;
-        }
-
-        // Workflow completed or failed, fetch full data
-        const data = await getWorkflowRequest(workflowId);
-        
-        if (!cancelled) {
-          setWorkflow(data);
-          setDocuments(data.execution_metadata?.documents ?? []);
-          // events and evidence not used in current UI
-        }
-      } catch (reason) {
-        if (!cancelled) {
-          setError(
-            reason instanceof Error ? reason.message : String(reason),
-          );
+    (async () => {
+      let anyAdded = false;
+      let failure: string | null = null;
+      for (const file of files) {
+        setDocStatuses((current) => [
+          ...current.filter((d) => d.name !== file.name),
+          { name: file.name, state: "indexing" },
+        ]);
+        try {
+          await ingestDocumentRequest(file, workflowId);
+          anyAdded = true;
+          setDocStatuses((current) => [
+            ...current.filter((d) => d.name !== file.name),
+            { name: file.name, state: "added" },
+          ]);
+        } catch (reason) {
+          failure = `${file.name}: ${reason instanceof Error ? reason.message : String(reason)}`;
+          setDocStatuses((current) => [
+            ...current.filter((d) => d.name !== file.name),
+            { name: file.name, state: "error", message: failure ?? undefined },
+          ]);
+          break; // keep the project accessible; surface the document error
         }
       }
-    };
 
-    pollWorkflow();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [workflowId]);
+      if (anyAdded && !failure && executionState === "completed") {
+        // Explicit, controlled reassessment so the plan can incorporate the
+        // newly indexed documents. Never runs for failed workflows.
+        setReassessing(true);
+        try {
+          await refreshWorkflowRequest(workflowId);
+          await refresh();
+        } catch (reason) {
+          setActionError(reason instanceof Error ? reason.message : String(reason));
+        } finally {
+          setReassessing(false);
+        }
+      }
+    })();
+  }, [workflow, executionState, workflowId, refresh]);
 
   async function handleContinue() {
     if (!workflow) {
       return;
     }
     setCompleting(true);
-    setError(null);
+    setActionError(null);
 
     try {
       const next = await continueGoalRequest(
         workflow.workflow_id,
         workflow.completed_tasks ?? [],
       );
-
-      setWorkflow(next);
+      setWorkflowState(next);
       setCompleting(false);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setActionError(reason instanceof Error ? reason.message : String(reason));
       setCompleting(false);
+    }
+  }
+
+  async function handleRetryAssessment() {
+    setRetrying(true);
+    setActionError(null);
+    try {
+      await refreshWorkflowRequest(workflowId);
+      await refresh();
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRetrying(false);
     }
   }
 
 async function decide(decision: string) {
     if (!workflow?.recommendation?.recommendation_id) return;
-    try { setWorkflow(await decideRecommendationRequest(workflow.workflow_id, workflow.recommendation.recommendation_id, decision, workflow.version)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    try { setWorkflowState(await decideRecommendationRequest(workflow.workflow_id, workflow.recommendation.recommendation_id, decision, workflow.version)); }
+    catch (reason) { setActionError(reason instanceof Error ? reason.message : String(reason)); }
   }
 
-  if (error) {
+  const error = pollError ?? actionError;
+
+  if (error && !workflow) {
     return (
       <section className="page">
       <p className="eyebrow">PROJECT UNAVAILABLE</p>
@@ -303,18 +318,57 @@ async function decide(decision: string) {
     );
   }
 
-if (!workflow) {
-return (
+  if (!workflow) {
+    const statusText =
+      executionState === "queued" ? "Queued…"
+      : executionState === "running" ? "Building your project plan…"
+      : executionState === "needs_review" ? "Awaiting review…"
+      : "Loading…";
+    return (
       <section className="page">
       <div className="card">
         <div className="meta-row">
           <div className="status status-checking">
             <span className="status-dot"></span>
-            <span>{executionState === "queued" ? "Queued..." : executionState === "running" ? "Building your project plan..." : executionState === "needs_review" ? "Awaiting review..." : "Loading..."}</span>
+            <span>{statusText}</span>
           </div>
         </div>
       </div>
-      <p className="muted">This may take a minute while we analyze your project and build the plan.</p>
+      <p className="muted">The agent is preparing your plan — this usually takes under a minute. You can leave this page and come back; your project is saved.</p>
+      {docStatuses.length > 0 ? (
+        <ul className="selected-files">
+          {docStatuses.map((doc) => (
+            <li key={doc.name}>
+              <span className="file-mark">DOC</span>
+              <span className="file-name">{doc.name}</span>
+              <span className={`doc-status doc-${doc.state}`}>
+                {doc.state === "indexing" ? "Indexing…" : doc.state === "added" ? "Added" : "Failed"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      </section>
+    );
+  }
+
+  if (executionState === "failed" || executionError) {
+    return (
+      <section className="page">
+      <p className="eyebrow">PROJECT ISSUE</p>
+      <h1>{workflow.original_goal}</h1>
+      <span className="muted mono">{workflow.workflow_id}</span>
+      <div className="card error-card" style={{ marginTop: 16 }}>
+        <h3>The agent could not finish this assessment.</h3>
+        <p>{executionError || "An unknown error occurred while building the plan."}</p>
+        <p className="muted">Your project is saved. You can retry the assessment — nothing was executed automatically.</p>
+        <div className="action-row">
+          <button type="button" className="primary" onClick={handleRetryAssessment} disabled={retrying}>
+            {retrying ? "Retrying…" : "Retry assessment"}
+          </button>
+          <button type="button" className="button secondary" onClick={() => navigate("history")}>Back to projects</button>
+        </div>
+      </div>
       </section>
     );
   }
@@ -351,8 +405,22 @@ return (
       <div className="section-title-row">
         <div><p className="eyebrow">PROJECT KNOWLEDGE</p><h2>Documents</h2></div>
       </div>
-      <p className="muted">Reference files added during project setup.</p>
+      <p className="muted">Reference files indexed for this project. Ingested content is used as evidence for assessments.</p>
+      {docStatuses.some((d) => d.state !== "added") || reassessing ? (
+        <ul className="selected-files">
+          {docStatuses.map((doc) => (
+            <li key={doc.name}>
+              <span className="file-mark">DOC</span>
+              <span className="file-name">{doc.name}</span>
+              <span className={`doc-status doc-${doc.state}`}>
+                {doc.state === "indexing" ? "Indexing…" : doc.state === "added" ? "Added" : "Failed"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {documents.length ? <ul className="document-list">{documents.map((name) => <li key={name}><span className="document-icon">↳</span>{name}</li>)}</ul> : <p className="empty-inline">No documents added yet.</p>}
+      {reassessing ? <p className="muted">Updating the plan with your documents…</p> : null}
     </div>
     {error ? <ErrorBanner message={error} /> : null}
 
@@ -587,11 +655,19 @@ function HistoryPage() {
       <div className="project-grid">
         {workflows.map((workflow) => {
           const progress = workflow.total_tasks === 0 ? 0 : Math.round((workflow.completed_tasks / workflow.total_tasks) * 100);
+          const isProcessing = workflow.execution_state === "queued" || workflow.execution_state === "running";
           return (
             <button key={workflow.workflow_id} type="button" className="project-card" onClick={() => navigate(`workflow/${encodeURIComponent(workflow.workflow_id)}`)}>
-              <span className="project-card-top"><span className="project-status">{workflow.priority} priority</span><span className="project-progress">{progress}%</span></span>
+              <span className="project-card-top">
+                <span className="project-status">{workflow.priority} priority</span>
+                <span className={`status status-${workflow.execution_state}`}>{workflow.execution_state}</span>
+              </span>
               <strong>{workflow.goal}</strong>
-              <span className="project-card-meta">{workflow.completed_tasks} of {workflow.total_tasks} actions complete</span>
+              {isProcessing ? (
+                <span className="project-card-meta">Building your plan…</span>
+              ) : (
+                <span className="project-card-meta">{workflow.completed_tasks} of {workflow.total_tasks} actions complete</span>
+              )}
               <span className="project-progress-track"><span style={{ width: `${progress}%` }} /></span>
               <span className="project-card-next">{workflow.recommendation_action ?? "Open project"}<span aria-hidden="true"> →</span></span>
             </button>
@@ -611,15 +687,23 @@ function AboutPage() {
 
     <div className="card">
       <p>
-        This is an advisory AI workplace operations agent. It analyzes a
-        work request, extracts organizational requirements and procedures,
-        builds and validates an execution plan, detects blockers, and
-        recommends the next action.
+        ActionPlan is an advisory AI workplace operations agent. Describe a
+        project goal and it organizes the work into an actionable plan:
+        analyzing the objective, extracting organizational requirements and
+        procedures, retrieving relevant evidence from your indexed documents,
+        and validating an execution order.
       </p>
 
       <p>
-        The agent never executes actions automatically: every recommendation
-        is advisory and should be reviewed by people.
+        As work progresses it tracks completion, detects blockers, and
+        recommends the next action. When project circumstances change, you can
+        supply updates and the agent will reassess the plan.
+      </p>
+
+      <p>
+        The agent is advisory-only: it never executes external actions
+        automatically. Every recommendation is a suggestion for your team to
+        review, accept, or reject.
       </p>
     </div>
   </section>

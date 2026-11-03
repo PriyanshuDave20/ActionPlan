@@ -14,6 +14,14 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+class WorkflowNotFoundError(RuntimeError):
+    """The requested workflow does not exist in persistent memory."""
+
+
+class EnqueueError(RuntimeError):
+    """The workflow could not be queued for background execution."""
+
+
 def _generate_workflow_id(goal: str) -> str:
     slug = "".join(character for character in goal.lower() if character.isalnum() or character.isspace())
     slug = "-".join(slug.split())[:40]
@@ -23,6 +31,16 @@ def _generate_workflow_id(goal: str) -> str:
 def _worker_id() -> str:
     """Generate a unique worker ID for this process."""
     return f"worker-{uuid4().hex[:8]}"
+
+
+def _send_workflow_job(queue_url: str, region: str, message: dict) -> str:
+    """Send one workflow job message to SQS. Returns the SQS MessageId.
+
+    Module-level so tests can stub SQS without touching AWS.
+    """
+    sqs = boto3.client("sqs", region_name=region)
+    response = sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(message))
+    return response.get("MessageId", "")
 
 
 class AgentService:
@@ -84,49 +102,65 @@ class AgentService:
         return self._execute_workflow_sync(workflow_id, payload)
 
     def _trigger_async_execution(self, workflow_id: str, payload: WorkRequestInput) -> None:
-        """Trigger async execution of the workflow.
-        
-        In production (when WORKFLOW_QUEUE_URL is set), publishes to SQS queue.
-        For local development, executes in a background thread.
+        """Enqueue the workflow for background execution.
+
+        In production (when WORKFLOW_QUEUE_URL is set), the complete validated
+        request payload is sent to SQS. For local development without a queue,
+        execution runs in a daemon thread as an explicitly configured fallback.
+
+        The workflow is persisted (as QUEUED) before this call. If enqueueing
+        fails, the workflow is transitioned to FAILED so no orphaned QUEUED
+        record is left waiting for a worker that will never come, and the
+        error is re-raised for the caller to surface.
         """
         settings = get_settings()
         queue_url = settings.workflow_queue_url
-        
+
         if queue_url:
-            # Production: send to SQS queue
-            import boto3
-            sqs = boto3.client("sqs", region_name=settings.aws_region)
-            message = json.dumps({"workflow_id": workflow_id, "payload": payload.model_dump()})
+            message = {
+                "workflow_id": workflow_id,
+                "payload": payload.model_dump(mode="json"),
+            }
             try:
-                response = sqs.send_message(QueueUrl=queue_url, MessageBody=message)
-                logger.info(f"Sent workflow {workflow_id} to SQS queue, MessageId: {response.get('MessageId')}")
-            except Exception as e:
-                logger.error(f"Failed to send workflow {workflow_id} to SQS: {e}")
-                raise
+                message_id = _send_workflow_job(queue_url, settings.aws_region, message)
+            except Exception as exc:
+                logger.error("Failed to enqueue workflow %s: %s", workflow_id, exc)
+                self._persist_failure(workflow_id, payload.goal, f"Failed to enqueue workflow: {exc}")
+                raise EnqueueError(f"Failed to enqueue workflow: {exc}") from exc
+            logger.info("Queued workflow %s (MessageId=%s)", workflow_id, message_id)
             return
-        
-        # Local development: execute in background thread
+
+        # Local development fallback: daemon thread (never used in Lambda,
+        # where WORKFLOW_QUEUE_URL is always configured).
         def execute_in_background():
             try:
                 self._execute_workflow_sync(workflow_id, payload)
-            except Exception as e:
-                # Mark workflow as failed
-                workflow = self.memory.get_workflow(workflow_id)
-                if workflow:
-                    workflow.execution_state = WorkflowExecutionState.FAILED
-                    workflow.execution_error = str(e)
-                    self.memory.save_workflow(workflow)
-        
+            except Exception as exc:
+                logger.exception("Background execution failed for %s", workflow_id)
+
         thread = threading.Thread(target=execute_in_background, daemon=True)
         thread.start()
 
-    def _execute_workflow_sync(self, workflow_id: str, payload: WorkRequestInput) -> WorkflowState:
-        """Execute the workflow synchronously (used by background worker)."""
-        # Claim the workflow for execution
-        claimed = self.memory.claim_workflow_for_execution(workflow_id, self._worker_id)
-        if not claimed:
-            raise RuntimeError(f"Could not claim workflow {workflow_id} for execution")
-        
+    def _persist_failure(self, workflow_id: str, goal: str, error: str) -> None:
+        """Persist a terminal FAILED state with a safe error description."""
+        workflow = self.memory.get_workflow(workflow_id)
+        if workflow is None:
+            workflow = WorkflowState(
+                workflow_id=workflow_id,
+                original_goal=goal,
+                execution_state=WorkflowExecutionState.QUEUED,
+            )
+        workflow.execution_state = WorkflowExecutionState.FAILED
+        workflow.execution_error = error
+        self.memory.save_workflow(workflow)
+
+    def _execute_claimed(self, workflow_id: str, payload: WorkRequestInput, claimed: WorkflowState) -> WorkflowState:
+        """Run the graph for an already-claimed workflow and persist the outcome.
+
+        COMPLETED is written only after the graph succeeds; any execution
+        error is persisted as FAILED (with the message) before re-raising so
+        the workflow never gets stuck in RUNNING.
+        """
         initial_state = {
             "workflow_id": workflow_id,
             "original_goal": payload.goal,
@@ -134,29 +168,76 @@ class AgentService:
             "incoming_completed_task_ids": [],
             "completed_tasks": [],
             "plan_revision_count": 0,
-            "execution_metadata": {"created": True, "worker_id": self._worker_id},
+            "execution_metadata": dict(claimed.execution_metadata or {}),
         }
-        
-        # Run the graph
-        result = self.graph.invoke(initial_state)
+
+        try:
+            result = self.graph.invoke(initial_state)
+        except Exception as exc:
+            logger.exception("Workflow %s execution failed", workflow_id)
+            self._persist_failure(workflow_id, payload.goal, str(exc))
+            raise
+
         workflow = self._to_workflow_state(result)
         workflow.execution_state = WorkflowExecutionState.COMPLETED
-        
-        # Save the completed workflow
+        # The graph's memory node replaces execution_metadata with a minimal
+        # dict; keep any user-added entries (e.g. ingested documents).
+        workflow.execution_metadata = {
+            **claimed.execution_metadata,
+            **workflow.execution_metadata,
+        }
+        # COMPLETED is durable only once this save succeeds.
         self.memory.save_workflow(workflow)
         return workflow
 
-    def execute_queued_workflow(self, workflow_id: str) -> WorkflowState | None:
-        """Execute a queued workflow (called by background worker).
-        
-        This method claims the workflow and executes it. Returns the completed
-        workflow state or None if the workflow couldn't be claimed.
+    def _execute_workflow_sync(self, workflow_id: str, payload: WorkRequestInput) -> WorkflowState:
+        """Claim and execute a workflow synchronously (local/testing path)."""
+        claimed = self.memory.claim_workflow_for_execution(workflow_id, self._worker_id)
+        if not claimed:
+            raise RuntimeError(f"Could not claim workflow {workflow_id} for execution")
+        return self._execute_claimed(workflow_id, payload, claimed)
+
+    def execute_queued_workflow(
+        self,
+        workflow_id: str,
+        payload: WorkRequestInput | None = None,
+    ) -> WorkflowState | None:
+        """Execute a queued workflow (called by the SQS worker).
+
+        Uses the complete request payload delivered with the queue message
+        when available; falls back to the persisted ``work_request`` so no
+        user-provided field (people, deadline, priority, constraints,
+        resources, success criteria) is silently discarded.
+
+        Returns the completed workflow, or ``None`` when the workflow could
+        not be claimed (duplicate delivery / already running) — an idempotent
+        skip. Raises :class:`WorkflowNotFoundError` for a missing record so
+        the worker can treat it as a permanent failure instead of leaving a
+        message to retry forever.
         """
         workflow = self.memory.get_workflow(workflow_id)
-        if not workflow:
+        if workflow is None:
+            raise WorkflowNotFoundError(f"Workflow {workflow_id} not found in persistent memory.")
+
+        if payload is None:
+            request = workflow.work_request
+            payload = WorkRequestInput(
+                goal=workflow.original_goal,
+                people_involved=request.people if request else [],
+                deadline=request.deadline if request else None,
+                priority=request.priority if request else "medium",
+                current_status=request.current_status if request else None,
+                constraints=request.constraints if request else [],
+                resources=request.resources if request else [],
+                success_criteria=request.success_criteria if request else [],
+            )
+
+        claimed = self.memory.claim_workflow_for_execution(workflow_id, self._worker_id)
+        if not claimed:
+            # Duplicate SQS delivery or another worker holds the claim.
+            logger.info("Workflow %s not claimable (not QUEUED); skipping.", workflow_id)
             return None
-        payload = WorkRequestInput(goal=workflow.original_goal)
-        return self._execute_workflow_sync(workflow_id, payload)
+        return self._execute_claimed(workflow_id, payload, claimed)
 
     def rebuild_workflow(self, workflow: WorkflowState) -> WorkflowState:
         """Re-run analysis for an existing workflow, preserving its identity and attachments."""
@@ -309,6 +390,7 @@ def _to_summary(workflow: WorkflowState) -> WorkflowSummary:
         updated_at=workflow.updated_at,
         deadline=work_request.deadline if work_request else None,
         priority=(work_request.priority or "medium") if work_request else "medium",
+        execution_state=workflow.execution_state.value,
         total_tasks=len(workflow.tasks),
         completed_tasks=len([
             task for task in workflow.tasks if task.status == "completed"

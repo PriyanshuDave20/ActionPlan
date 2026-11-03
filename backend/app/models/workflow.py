@@ -60,6 +60,7 @@ class WorkflowSummary(BaseModel):
     updated_at: datetime
     deadline: date | None = None
     priority: Literal["low", "medium", "high"] = "medium"
+    execution_state: Literal["queued", "running", "needs_review", "completed", "failed"] = "queued"
     total_tasks: int = 0
     completed_tasks: int = 0
     blocker_count: int = 0

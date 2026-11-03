@@ -1162,6 +1162,46 @@ button.primary:disabled,
   animation: pulse 1.5s infinite;
 }
 
+/* Execution lifecycle states (workflow page + project cards). */
+.status-running {
+  background: rgba(34, 211, 238, 0.15);
+  color: var(--info);
+}
+
+.status-failed {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--bad);
+}
+
+.status-queued {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--warn);
+}
+
+.status-needs_review {
+  background: rgba(34, 211, 238, 0.15);
+  color: var(--info);
+}
+
+/* Per-document ingestion status chips. */
+.doc-status {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.doc-indexing {
+  color: var(--warn);
+}
+
+.doc-added {
+  color: var(--good);
+}
+
+.doc-error {
+  color: var(--bad);
+}
+
 /* Status ok/error for backend */
 .status-ok {
   background: rgba(74, 222, 128, 0.15);

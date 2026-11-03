@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 
-from app.agent.service import AgentService
+from app.agent.service import AgentService, EnqueueError
 from app.api.dependencies import get_agent_service
 from app.api.dependencies import get_workspace
 from app.models.work_request import WorkRequestInput
@@ -23,11 +23,16 @@ def create_goal(
         existing = workspace.get_by_idempotency_key(idempotency_key)
         if existing:
             return existing
-    
-    if sync:
-        workflow = service.create_workflow_sync(payload)
-    else:
-        workflow = service.create_workflow(payload)
+
+    try:
+        if sync:
+            workflow = service.create_workflow_sync(payload)
+        else:
+            workflow = service.create_workflow(payload)
+    except EnqueueError as error:
+        # The workflow is persisted as FAILED by the service; never report a
+        # successful queued response when the job could not be enqueued.
+        raise HTTPException(status_code=503, detail=str(error)) from error
     result = workspace.ensure(workflow)
     
     # Store idempotency key if provided

@@ -8,10 +8,13 @@ import json
 import logging
 import os
 
-from app.agent.service import AgentService
-from app.api.dependencies import get_agent_service, reset_singletons
+from app.agent.service import (
+    AgentService,
+    WorkflowNotFoundError,
+)
 from app.memory.dynamodb import create_memory_store
 from app.config import get_settings, validate_settings
+from app.models.work_request import WorkRequestInput
 
 # Configure logging
 logging.basicConfig(
@@ -53,48 +56,75 @@ def _get_agent_service():
 
 def handler(event, context):
     """SQS message handler for workflow execution.
-    
-    Expected event format:
-    {
-        "Records": [
-            {
-                "body": "{\"workflow_id\": \"wf_xxx\", \"payload\": {\"goal\": \"...\"}}"
-            }
-        ]
-    }
+
+    Expected message body:
+    {"workflow_id": "wf_xxx", "payload": {...WorkRequestInput...}}
+
+    Failure policy (matches the queue's ReportBatchItemFailures +
+    redrive-to-DLQ configuration):
+    - Transient execution errors are reported via ``batchItemFailures`` so
+      SQS retries the delivery; the workflow is persisted as FAILED by the
+      service before this happens.
+    - Permanent problems (malformed message, missing workflow record) are
+      acknowledged without retry — retrying could never succeed.
+    - Duplicate deliveries (workflow no longer QUEUED) are acknowledged as
+      idempotent skips.
     """
-    logger.info(f"Received event with {len(event.get('Records', []))} records")
-    
+    records = event.get("Records", [])
+    logger.info("Received event with %d records", len(records))
+
     results = []
-    for record in event.get("Records", []):
+    batch_item_failures = []
+
+    for record in records:
+        message_id = record.get("messageId", "")
         try:
-            body = json.loads(record["body"])
-            workflow_id = body.get("workflow_id")
-            if not workflow_id:
-                logger.error(f"Record missing workflow_id: {record}")
-                results.append({"workflow_id": None, "status": "error", "error": "Missing workflow_id"})
-                continue
-            
-            logger.info(f"Processing workflow {workflow_id}")
-            
-            # Get agent service and execute
+            body = json.loads(record.get("body", "{}"))
+        except json.JSONDecodeError as exc:
+            logger.error("Record %s has invalid JSON body: %s", message_id, exc)
+            results.append({"message_id": message_id, "status": "error", "permanent": True, "error": "invalid message body"})
+            continue  # permanent: acknowledge, never retry
+
+        workflow_id = body.get("workflow_id")
+        if not workflow_id:
+            logger.error("Record %s missing workflow_id", message_id)
+            results.append({"message_id": message_id, "status": "error", "permanent": True, "error": "missing workflow_id"})
+            continue  # permanent: acknowledge, never retry
+
+        raw_payload = body.get("payload")
+        try:
+            payload = WorkRequestInput.model_validate(raw_payload) if raw_payload else None
+        except Exception as exc:
+            logger.error("Record %s has invalid payload for %s: %s", message_id, workflow_id, exc)
+            results.append({"workflow_id": workflow_id, "message_id": message_id, "status": "error", "permanent": True, "error": "invalid payload"})
+            continue  # permanent: acknowledge, never retry
+
+        logger.info("Processing workflow %s", workflow_id)
+
+        try:
             service = _get_agent_service()
-            result = service.execute_queued_workflow(workflow_id)
-            
-            if result:
-                logger.info(f"Workflow {workflow_id} completed with state: {result.execution_state.value}")
-                results.append({"workflow_id": workflow_id, "status": "success", "execution_state": result.execution_state.value})
-            else:
-                logger.warning(f"Workflow {workflow_id} could not be claimed (already running or not queued)")
-                results.append({"workflow_id": workflow_id, "status": "skipped", "reason": "not_queued_or_already_running"})
-                
-        except Exception as e:
-            logger.exception(f"Error processing record: {e}")
-            results.append({"workflow_id": body.get("workflow_id") if "body" in locals() else None, "status": "error", "error": str(e)})
-    
+            result = service.execute_queued_workflow(workflow_id, payload)
+        except WorkflowNotFoundError as exc:
+            logger.error("Workflow %s missing from persistent memory: %s", workflow_id, exc)
+            results.append({"workflow_id": workflow_id, "message_id": message_id, "status": "error", "permanent": True, "error": "workflow record not found"})
+            continue  # permanent: acknowledge, never retry
+        except Exception as exc:  # transient execution failure (already persisted as FAILED)
+            logger.exception("Transient failure executing workflow %s", workflow_id)
+            results.append({"workflow_id": workflow_id, "message_id": message_id, "status": "error", "permanent": False, "error": str(exc)})
+            batch_item_failures.append({"itemIdentifier": message_id})
+            continue
+
+        if result is not None:
+            logger.info("Workflow %s finished with state %s", workflow_id, result.execution_state.value)
+            results.append({"workflow_id": workflow_id, "message_id": message_id, "status": "success", "execution_state": result.execution_state.value})
+        else:
+            logger.info("Workflow %s not claimable (duplicate delivery or already running); skipping.", workflow_id)
+            results.append({"workflow_id": workflow_id, "message_id": message_id, "status": "skipped", "reason": "not_queued_or_already_running"})
+
     return {
         "statusCode": 200,
-        "body": json.dumps({"results": results})
+        "body": json.dumps({"results": results}),
+        "batchItemFailures": batch_item_failures,
     }
 
 

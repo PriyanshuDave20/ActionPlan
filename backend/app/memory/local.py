@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -28,8 +30,25 @@ class LocalMemoryStore:
         with self._lock:
             payload = workflow.model_dump(mode="json")
             workflow_file = self.workflows_dir / f"{workflow.workflow_id}.json"
-            with workflow_file.open("w", encoding="utf-8") as handle:
+            # Atomic write: readers (API requests) may run concurrently with
+            # the background execution thread; a truncated in-place write
+            # would surface as an empty/partial JSON file.
+            handle = tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=self.workflows_dir, delete=False
+            )
+            try:
                 json.dump(payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+                handle.close()
+                os.replace(handle.name, workflow_file)
+            except BaseException:
+                handle.close()
+                try:
+                    os.unlink(handle.name)
+                except OSError:
+                    pass
+                raise
             self._update_index(workflow.workflow_id, workflow.updated_at.isoformat())
 
     def get_workflow(self, workflow_id: str) -> WorkflowState | None:
