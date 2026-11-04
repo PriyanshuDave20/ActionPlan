@@ -8,7 +8,7 @@ Missing information is represented as an entry in ``missing_information``
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 ProjectType = Literal[
     "academic_research",
@@ -49,6 +49,13 @@ class SpecItem(BaseModel):
     source: EvidenceRef = Field(default_factory=EvidenceRef)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     kind: Literal["explicit", "inference"] = "explicit"
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _coerce_content(cls, value):
+        if isinstance(value, (int, float)):
+            return str(value)
+        return value
 
 
 def _items() -> list[SpecItem]:
@@ -113,6 +120,21 @@ class PlannedTaskDraft(BaseModel):
     evidence_passages: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     requirement_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("deliverable_refs", mode="before")
+    @classmethod
+    def _coerce_refs(cls, value):
+        """LLMs emit integer indices; coerce to the string form we store."""
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return value
+
+    @field_validator("id", "title", "description", mode="before")
+    @classmethod
+    def _coerce_str(cls, value):
+        if isinstance(value, (int, float)):
+            return str(value)
+        return value
 
 
 class WorkPackageDraft(BaseModel):

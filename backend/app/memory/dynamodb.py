@@ -1,6 +1,7 @@
 import json
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import boto3
 from botocore.exceptions import ClientError
@@ -10,6 +11,21 @@ from app.models.workflow import WorkflowState, WorkflowExecutionState
 
 _PRIMARY_KEY = "workflow_id"
 _EXECUTION_LOCK_KEY = "execution_lock"
+
+
+def _floats_to_decimal(value):
+    """Recursively convert floats to Decimal for the DynamoDB serializer.
+
+    boto3 rejects Python floats; extracted project specifications carry
+    float confidence values, so they must be Decimal before PutItem.
+    """
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _floats_to_decimal(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_floats_to_decimal(item) for item in value]
+    return value
 
 
 class DynamoDBMemoryStore:
@@ -55,7 +71,7 @@ class DynamoDBMemoryStore:
     def save_workflow(self, workflow: WorkflowState) -> None:
         payload = workflow.model_dump(mode="json")
         payload["updated_at"] = payload.get("updated_at") or workflow.updated_at.isoformat()
-        self.table.put_item(Item=payload)
+        self.table.put_item(Item=_floats_to_decimal(payload))
 
     def get_workflow(self, workflow_id: str) -> WorkflowState | None:
         try:

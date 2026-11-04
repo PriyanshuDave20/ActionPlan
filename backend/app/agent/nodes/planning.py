@@ -1,26 +1,24 @@
+"""Deterministic goal-derived fallback planning.
+
+This module is no longer part of the primary graph: document-grounded
+planning lives in ``work_breakdown`` + ``planning_engine``. These helpers
+remain for direct callers and tests that need a plan without an LLM.
+"""
+
 from app.agent.state import AgentState
 from app.models.plan import CandidatePlan, CandidateTask
 from app.models.task import Task
-
-
-def _template_task(requirement, task_id: str, description: str, effort: str, dependencies: list[str], required_approvals: list[str] | None = None) -> CandidateTask:
-    return CandidateTask(
-        task_id=task_id,
-        description=description,
-        requirement_id=requirement.id,
-        effort=effort,
-        dependencies=dependencies,
-        required_approvals=required_approvals or [],
-    )
 
 
 def _materialize_tasks(candidate: CandidatePlan) -> list[Task]:
     return [
         Task(
             id=task.task_id,
+            title=task.title,
             description=task.description,
             dependencies=list(task.dependencies),
             effort=task.effort,
+            required_approvals=list(task.required_approvals),
             requirement_ids=[task.requirement_id] if task.requirement_id else [],
         )
         for task in candidate.tasks
@@ -28,75 +26,34 @@ def _materialize_tasks(candidate: CandidatePlan) -> list[Task]:
 
 
 def build_candidate_plan(state: AgentState) -> CandidatePlan:
-    """Derive an executable candidate plan from extracted requirements.
+    """Goal-derived deterministic fallback (no LLM, no requirement template).
 
-    Tasks are independent by default: there is no prerequisite data in the
-    extracted requirements, so no artificial chain is imposed. This lets
-    independent work execute in parallel while the dependency model still
-    supports real prerequisites when they exist.
+    Produces a small, honest starting plan scoped to the goal text itself.
     """
-
-    requirements = state.get("requirements", [])
-    tasks: list[CandidateTask] = []
-
-    for index, requirement in enumerate(requirements, start=1):
-        task_id = f"task_{index}"
-        category_text = {
-            "process": "Plan and sequence the work",
-            "policy": "Compile the governing organizational policies",
-            "approval": "Prepare the change package and obtain required approvals",
-            "evidence": "Confirm evidence and success criteria",
-            "definition": "Define the work precisely",
-        }.get(requirement.category, "Complete the work")
-        effort = {
-            "process": "medium",
-            "policy": "medium",
-            "approval": "medium",
-            "evidence": "small",
-            "definition": "small",
-        }.get(requirement.category, "small")
-        required_approvals: list[str] = []
-        if requirement.category == "approval":
-            required_approvals = ["decision_maker"]
-        tasks.append(
-            _template_task(
-                requirement,
-                task_id,
-                f"{category_text}: {requirement.text}",
-                effort,
-                [],
-                required_approvals,
-            )
+    goal = state.get("original_goal", "the project")
+    starter = [
+        ("Clarify scope and success criteria", f"Confirm the scope, success criteria and constraints for {goal}."),
+        ("Draft the work plan", f"Break {goal} into ordered work packages with owners."),
+        ("Execute the core work", f"Carry out the main work required for {goal}."),
+        ("Review outcomes and close out", f"Verify outcomes against the success criteria for {goal} and record sign-off."),
+    ]
+    tasks = [
+        CandidateTask(
+            task_id=f"task_{index}",
+            title=title,
+            description=description,
+            completion_criteria=[f"{title} completed for {goal}."],
+            dependencies=[f"task_{index - 1}"] if index > 1 else [],
+            effort="medium" if index in (2, 3) else "small",
+            required_approvals=["decision_maker"] if index == 4 else [],
         )
-
+        for index, (title, description) in enumerate(starter, start=1)
+    ]
     return CandidatePlan(
         rationale=(
-            "Tasks are derived from the extracted requirements. Tasks carry no "
-            "implicit cross-dependencies; only explicitly declared prerequisites "
-            "order work."
+            "No project documents were available, so this is a minimal "
+            "goal-scoped starting plan rather than a document-grounded one."
         ),
-        assumptions=[
-            requirement.text
-            for requirement in requirements
-            if requirement.category == "evidence"
-        ] or ["Missing organizational details must be gathered as evidence."],
+        assumptions=["Scope derived from the goal text only; documents were not provided."],
         tasks=tasks,
     )
-
-
-def create_plan_node(state: AgentState) -> AgentState:
-    if state.get("candidate_plan") is None:
-        candidate = build_candidate_plan(state)
-    else:
-        candidate = state["candidate_plan"]
-        requirements = {requirement.id: requirement for requirement in state.get("requirements", [])}
-        covered = {task.requirement_id for task in candidate.tasks if task.requirement_id}
-        missing = [req for req in requirements.values() if req.id not in covered]
-        if missing and not any(task.task_id.startswith("task_") for task in candidate.tasks):
-            candidate = build_candidate_plan(state)
-
-    return {
-        "candidate_plan": candidate,
-        "tasks": _materialize_tasks(candidate),
-        "execution_metadata": {"plan": "created"},
-    }
