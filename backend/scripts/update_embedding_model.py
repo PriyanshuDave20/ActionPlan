@@ -1,7 +1,7 @@
 import boto3
 
 
-NEW_MODEL = "nvidia/nv-embedqa-e5-v5"
+NEW_MODEL = "nvidia/nemotron-3.5-embed-1b"
 
 
 def main() -> None:
