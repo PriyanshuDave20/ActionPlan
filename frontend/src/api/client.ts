@@ -199,3 +199,22 @@ export function listEvidenceRequest(workflowId: string): Promise<WorkflowEvidenc
 export function decideRecommendationRequest(workflowId: string, recommendationId: string, decision: string, version: number, reason?: string): Promise<WorkflowState> {
   return requestJson(`/workflows/${encodeURIComponent(workflowId)}/recommendations/${encodeURIComponent(recommendationId)}/decision`, jsonInit("POST", { decision, version, reason }));
 }
+
+export function executeRecommendationRequest(
+  workflowId: string,
+  recommendationId: string,
+  payload: {
+    version: number;
+    message?: string;
+    channel?: string;
+    jira_project?: string;
+    jira_issue_type?: string;
+    notify_slack?: boolean;
+    create_jira_issue?: boolean;
+  },
+): Promise<WorkflowState> {
+  return requestJson(
+    `/workflows/${encodeURIComponent(workflowId)}/recommendations/${encodeURIComponent(recommendationId)}/execute`,
+    jsonInit("POST", payload),
+  );
+}

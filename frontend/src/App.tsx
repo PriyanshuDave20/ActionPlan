@@ -8,6 +8,7 @@ import {
   ingestDocumentRequest,
   refreshWorkflowRequest,
   decideRecommendationRequest,
+  executeRecommendationRequest,
   type BackendStatus,
 } from "./api/client";
 import type { WorkflowSummary } from "./api/workflow-types";
@@ -104,6 +105,59 @@ const ACTION_LABELS: Record<string, string> = {
 function actionLabel(action: string | undefined): string {
   if (!action) return "—";
   return ACTION_LABELS[action] ?? action;
+}
+
+const PRIORITY_LABELS: Record<string, string> = {
+  low: "Low priority",
+  medium: "Medium priority",
+  high: "High priority",
+};
+
+function priorityLabel(priority: string | undefined): string {
+  return PRIORITY_LABELS[priority ?? ""] ?? priority ?? "Medium priority";
+}
+
+const DEADLINE_LABELS: Record<string, string> = {
+  none: "No deadline pressure",
+  low: "Comfortable timeline",
+  medium: "Deadline approaching",
+  high: "Urgent deadline",
+  overdue: "Past due",
+};
+
+function deadlineLabel(pressure: string | undefined): string {
+  return DEADLINE_LABELS[pressure ?? ""] ?? pressure ?? "No deadline pressure";
+}
+
+const TASK_STATUS_LABELS: Record<string, string> = {
+  pending: "Not started",
+  ready: "Ready to start",
+  in_progress: "In progress",
+  completed: "Complete",
+  blocked: "Blocked",
+  cancelled: "Cancelled",
+};
+
+function taskStatusLabel(status: string | undefined): string {
+  return TASK_STATUS_LABELS[status ?? ""] ?? status ?? "Not started";
+}
+
+const EXECUTION_STATUS_LABELS: Record<string, string> = {
+  queued: "Queued",
+  running: "Building",
+  needs_review: "Needs review",
+  completed: "Complete",
+  failed: "Failed",
+};
+
+function executionStatusLabel(status: string | undefined): string {
+  return EXECUTION_STATUS_LABELS[status ?? ""] ?? status ?? "Unknown";
+}
+
+function validationLabel(valid: boolean | undefined): string {
+  if (valid === true) return "Ready to use";
+  if (valid === false) return "Needs revision";
+  return "Not checked";
 }
 
 function friendlyStateStatus(status: string): string {
@@ -257,6 +311,8 @@ function WorkflowPage({ workflowId }: { workflowId: string }) {
   const [retrying, setRetrying] = useState(false);
   const [docStatuses, setDocStatuses] = useState<DocUploadStatus[]>([]);
   const [reassessing, setReassessing] = useState(false);
+  const [executingIntegration, setExecutingIntegration] = useState(false);
+  const [jiraProject, setJiraProject] = useState("");
   const pendingRef = useRef<File[] | null>(null);
   const ingestionStartedRef = useRef(false);
 
@@ -355,6 +411,28 @@ async function decide(decision: string) {
     if (!workflow?.recommendation?.recommendation_id) return;
     try { setWorkflowState(await decideRecommendationRequest(workflow.workflow_id, workflow.recommendation.recommendation_id, decision, workflow.version)); }
     catch (reason) { setActionError(friendlyError(reason)); }
+  }
+
+  async function handleExecuteIntegration(notifySlack: boolean, createJiraIssue: boolean) {
+    const currentWorkflow = workflow;
+    const recommendation = currentWorkflow?.recommendation;
+    if (!currentWorkflow || !recommendation?.recommendation_id) return;
+    setExecutingIntegration(true);
+    setActionError(null);
+    try {
+      setWorkflowState(
+        await executeRecommendationRequest(currentWorkflow.workflow_id, recommendation.recommendation_id, {
+          version: currentWorkflow.version,
+          notify_slack: notifySlack,
+          create_jira_issue: createJiraIssue,
+          jira_project: createJiraIssue ? jiraProject.trim() || undefined : undefined,
+        }),
+      );
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setExecutingIntegration(false);
+    }
   }
 
   const error = pollError ?? actionError;
@@ -501,10 +579,10 @@ async function decide(decision: string) {
             })()}
           </span>
 
-          <span>Priority: {workflow.recommendation.priority}</span>
+            <span>{priorityLabel(workflow.recommendation.priority)}</span>
 
           <span>
-            Deadline pressure: {workflow.recommendation.deadline_pressure}
+            {deadlineLabel(workflow.recommendation.deadline_pressure)}
           </span>
         </div>
         <div className="action-row">
@@ -513,6 +591,36 @@ async function decide(decision: string) {
               <button className="primary" type="button" onClick={() => decide("accepted")}>Accept</button>
               <button className="button secondary" type="button" onClick={() => decide("rejected")}>Reject</button>
               <button className="button secondary" type="button" onClick={() => decide("revision_requested")}>Request revision</button>
+            </>
+          ) : null}
+
+          {workflow.recommendation.recommendation_id && workflow.recommendation.status === "accepted" ? (
+            <>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={executingIntegration}
+                onClick={() => handleExecuteIntegration(true, false)}
+              >
+                {executingIntegration ? "Sending…" : "Send to Slack"}
+              </button>
+              <label className="field">
+                <span className="muted">Jira project</span>
+                <input
+                  value={jiraProject}
+                  onChange={(event) => setJiraProject(event.target.value)}
+                  placeholder="ENG"
+                  disabled={executingIntegration}
+                />
+              </label>
+              <button
+                type="button"
+                className="primary"
+                disabled={executingIntegration || !jiraProject.trim()}
+                onClick={() => handleExecuteIntegration(false, true)}
+              >
+                {executingIntegration ? "Creating…" : "Create Jira issue"}
+              </button>
             </>
           ) : null}
         </div>
@@ -575,8 +683,7 @@ async function decide(decision: string) {
       {workflow.plan_validation ? (
         <div className="meta-row">
           <span>
-            Validation:{" "}
-            {workflow.plan_validation.valid ? "valid" : "invalid"} -{" "}
+            {validationLabel(workflow.plan_validation.valid)}:{" "}
             {workflow.plan_validation.summary}
           </span>
 
@@ -618,7 +725,7 @@ async function decide(decision: string) {
                 <tr key={task.id}>
                   <td>
                     <span className={taskStatusClass}>
-                      {task.status}
+                    {taskStatusLabel(task.status)}
                     </span>
                   </td>
 
@@ -737,8 +844,8 @@ function HistoryPage() {
           return (
             <button key={workflow.workflow_id} type="button" className="project-card" onClick={() => navigate(`workflow/${encodeURIComponent(workflow.workflow_id)}`)}>
               <span className="project-card-top">
-                <span className="project-status">{workflow.priority} priority</span>
-                <span className={`status status-${workflow.execution_state}`}>{workflow.execution_state}</span>
+                    <span className="project-status">{priorityLabel(workflow.priority)}</span>
+                    <span className={`status status-${workflow.execution_state}`}>{executionStatusLabel(workflow.execution_state)}</span>
               </span>
               <strong>{workflow.goal}</strong>
               {isProcessing ? (
@@ -781,7 +888,8 @@ function AboutPage() {
       <p>
         The agent is advisory-only: it never executes external actions
         automatically. Every recommendation is a suggestion for your team to
-        review, accept, or reject.
+        review, accept, or reject. Accepted recommendations can then be sent
+        explicitly to Slack or Jira when those integrations are configured.
       </p>
     </div>
   </section>

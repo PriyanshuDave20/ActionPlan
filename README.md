@@ -94,6 +94,44 @@ Or with the bundled Python:
 
 Open `http://127.0.0.1:8000/docs`.
 
+## Production Hardening
+
+Set `API_TOKENS` to a comma-separated bearer-token allow-list for deployed
+environments. Authenticated callers then send:
+
+```http
+Authorization: Bearer <token>
+```
+
+`/health`, `/docs`, and `/openapi.json` remain public for operational checks.
+The API also adds standard security headers and rejects request bodies larger
+than 10 MB.
+
+## Explicit Integrations
+
+When an accepted recommendation is ready for hand-off, use:
+
+```http
+POST /workflows/{workflow_id}/recommendations/{recommendation_id}/execute
+```
+
+The request must specify one or both integrations:
+
+```json
+{
+  "version": 3,
+  "notify_slack": true,
+  "create_jira_issue": true,
+  "jira_project": "ENG",
+  "jira_issue_type": "Task"
+}
+```
+
+Configure `SLACK_WEBHOOK_URL` and/or the three Jira settings in the deployed
+Lambda environment. Every successful action is recorded in workflow events and
+`execution_metadata.integrations`. The agent still never executes anything
+without an accepted recommendation and an explicit execute request.
+
 ## AWS Lambda Deployment (CodeBuild + API Gateway HTTP API)
 
 The backend runs as a serverless FastAPI application on AWS Lambda behind

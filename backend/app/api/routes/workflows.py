@@ -1,4 +1,12 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
+import httpx
+
+from app.config import get_settings
+from app.integrations.jira import JiraIntegration
+from app.integrations.models import ExecutionRequest, IntegrationResult
+from app.integrations.slack import SlackIntegration
 
 from app.agent.service import AgentService
 from app.api.dependencies import get_agent_service
@@ -134,3 +142,87 @@ def recommendation_decision(workflow_id: str, recommendation_id: str, payload: R
     recommendation.status = payload.decision; recommendation.decision_reason = payload.reason; recommendation.decided_at = workflow.updated_at
     try: return workspace.save(workflow, payload.version, "recommendation_" + payload.decision, recommendation_id, {"reason": payload.reason or ""})
     except WorkspaceError as error: _raise(error)
+
+
+@router.post("/{workflow_id}/recommendations/{recommendation_id}/execute", response_model=WorkflowState)
+async def execute_recommendation(
+    workflow_id: str,
+    recommendation_id: str,
+    payload: ExecutionRequest,
+    service: AgentService = Depends(get_agent_service),
+    workspace: WorkspaceStore = Depends(get_workspace),
+) -> WorkflowState:
+    """Run an explicitly requested integration after a human accepts the recommendation."""
+    workflow = _workspace_workflow(workflow_id, service, workspace)
+    recommendation = workflow.recommendation
+    if recommendation is None or recommendation.recommendation_id != recommendation_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found.")
+    if recommendation.status != "accepted":
+        raise HTTPException(
+            status_code=409,
+            detail="Only accepted recommendations can be sent to an integration.",
+        )
+
+    settings = get_settings()
+    results: list[IntegrationResult] = []
+    text = payload.message or (
+        f"Recommendation for {workflow.original_goal}: {recommendation.action}. "
+        f"{recommendation.reason}"
+    )
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        if payload.notify_slack:
+            try:
+                results.append(
+                    await SlackIntegration(settings.slack_webhook_url, client).post_message(
+                        text=text, channel=payload.channel
+                    )
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            except RuntimeError as error:
+                raise HTTPException(status_code=502, detail=str(error)) from error
+
+        if payload.create_jira_issue:
+            if not payload.jira_project:
+                raise HTTPException(status_code=400, detail="jira_project is required.")
+            try:
+                results.append(
+                    await JiraIntegration(
+                        base_url=settings.jira_base_url,
+                        email=settings.jira_email,
+                        api_token=settings.jira_api_token,
+                        client=client,
+                    ).create_issue(
+                        project=payload.jira_project,
+                        summary=recommendation.action[:240],
+                        description=text,
+                        issue_type=payload.jira_issue_type,
+                    )
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            except RuntimeError as error:
+                raise HTTPException(status_code=502, detail=str(error)) from error
+
+    if not results:
+        raise HTTPException(status_code=400, detail="No integration was requested.")
+
+    workflow.execution_metadata.setdefault("integrations", []).append(
+        {
+            "recommendation_id": recommendation_id,
+            "at": datetime.now(timezone.utc).isoformat(),
+            "results": [result.model_dump(mode="json") for result in results],
+        }
+    )
+    return workspace.save(
+        workflow,
+        payload.version,
+        "integration_executed",
+        recommendation_id,
+        {
+            "providers": [result.provider for result in results],
+            "ok": all(result.ok for result in results),
+        },
+        actor="user",
+    )

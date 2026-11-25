@@ -71,6 +71,18 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     frontend_origin: str | None = None
 
+    # Security. API_TOKENS is a comma-separated bearer-token allow-list. When
+    # unset, the API remains open for local development; production deployments
+    # should always set at least one token.
+    api_tokens: str | None = None
+
+    # Optional outbound integrations. Values stay in the process environment
+    # and are never persisted into workflow state.
+    slack_webhook_url: str | None = None
+    jira_base_url: str | None = None
+    jira_email: str | None = None
+    jira_api_token: str | None = None
+
     # AWS
     aws_region: str = "us-east-2"
     dynamodb_table_name: str = "ActionPlanner"
