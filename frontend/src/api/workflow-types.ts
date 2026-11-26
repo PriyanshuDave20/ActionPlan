@@ -14,6 +14,7 @@ export interface Person {
 }
 
 export interface WorkRequestInput {
+  title?: string | null;
   goal: string;
   people_involved?: Person[];
   deadline?: string | null;
@@ -25,6 +26,7 @@ export interface WorkRequestInput {
 }
 
 export interface WorkRequest {
+  title?: string | null;
   goal: string;
   people: Person[];
   roles: string[];
@@ -187,6 +189,7 @@ export interface Blocker {
 /** Response of POST /goals and GET /workflows/{id}. Mirrors WorkflowState. */
 export interface WorkflowState {
   workflow_id: string;
+  project_title?: string | null;
   original_goal: string;
   work_request: WorkRequest | null;
   objective_analysis: ObjectiveAnalysis | null;
@@ -217,6 +220,7 @@ export interface WorkflowState {
 
 export interface WorkflowSummary {
   workflow_id: string;
+  title?: string;
   goal: string;
   updated_at: string;
   version: number;

@@ -22,8 +22,12 @@ class EnqueueError(RuntimeError):
     """The workflow could not be queued for background execution."""
 
 
-def _generate_workflow_id(goal: str) -> str:
-    slug = "".join(character for character in goal.lower() if character.isalnum() or character.isspace())
+def _project_title(payload: WorkRequestInput) -> str:
+    return (payload.title or payload.goal).strip() or "Untitled project"
+
+
+def _generate_workflow_id(title: str) -> str:
+    slug = "".join(character for character in title.lower() if character.isalnum() or character.isspace())
     slug = "-".join(slug.split())[:40]
     return f"wf_{slug or 'goal'}_{uuid4().hex[:8]}"
 
@@ -61,11 +65,13 @@ class AgentService:
         else:
             payload = goal_or_input
 
-        workflow_id = _generate_workflow_id(payload.goal)
+        title = _project_title(payload)
+        workflow_id = _generate_workflow_id(title)
         
         # Create workflow in QUEUED state
         workflow = WorkflowState(
             workflow_id=workflow_id,
+            project_title=title,
             original_goal=payload.goal,
             work_request=None,  # Will be populated during execution
             execution_state=WorkflowExecutionState.QUEUED,
@@ -86,11 +92,13 @@ class AgentService:
         else:
             payload = goal_or_input
 
-        workflow_id = _generate_workflow_id(payload.goal)
+        title = _project_title(payload)
+        workflow_id = _generate_workflow_id(title)
         
         # Create workflow in QUEUED state
         workflow = WorkflowState(
             workflow_id=workflow_id,
+            project_title=title,
             original_goal=payload.goal,
             work_request=None,
             execution_state=WorkflowExecutionState.QUEUED,
@@ -163,6 +171,7 @@ class AgentService:
         """
         initial_state = {
             "workflow_id": workflow_id,
+            "project_title": _project_title(payload),
             "original_goal": payload.goal,
             "work_request_input": payload,
             "incoming_completed_task_ids": [],
@@ -222,6 +231,7 @@ class AgentService:
         if payload is None:
             request = workflow.work_request
             payload = WorkRequestInput(
+                title=workflow.project_title,
                 goal=workflow.original_goal,
                 people_involved=request.people if request else [],
                 deadline=request.deadline if request else None,
@@ -243,6 +253,7 @@ class AgentService:
         """Re-run analysis for an existing workflow, preserving its identity and attachments."""
         request = workflow.work_request
         payload = WorkRequestInput(
+            title=workflow.project_title,
             goal=workflow.original_goal,
             people_involved=request.people if request else [],
             deadline=request.deadline if request else None,
@@ -254,6 +265,7 @@ class AgentService:
         )
         result = self.graph.invoke({
             "workflow_id": workflow.workflow_id,
+            "project_title": workflow.project_title,
             "original_goal": workflow.original_goal,
             "work_request_input": payload,
             "incoming_completed_task_ids": [],
@@ -314,6 +326,7 @@ class AgentService:
     def _to_agent_state(workflow: WorkflowState) -> AgentState:
         state: AgentState = {
             "workflow_id": workflow.workflow_id,
+            "project_title": workflow.project_title,
             "original_goal": workflow.original_goal,
             "work_request": workflow.work_request,
             "work_request_input": None,
@@ -347,6 +360,7 @@ class AgentService:
     @staticmethod
     def _to_workflow_state(state: AgentState) -> WorkflowState:
         mapping = {
+            "project_title": "project_title",
             "work_request": "work_request",
             "project_specification": "project_specification",
             "objective_analysis": "objective_analysis",
@@ -375,6 +389,7 @@ class AgentService:
         }
         workflow = WorkflowState(
             workflow_id=state.get("workflow_id", ""),
+            project_title=state.get("project_title"),
             original_goal=state.get("original_goal", ""),
         )
         for state_key, workflow_key in mapping.items():
@@ -388,6 +403,7 @@ def _to_summary(workflow: WorkflowState) -> WorkflowSummary:
     work_request = workflow.work_request
     return WorkflowSummary(
         workflow_id=workflow.workflow_id,
+        title=workflow.project_title or workflow.original_goal,
         goal=workflow.original_goal,
         updated_at=workflow.updated_at,
         deadline=work_request.deadline if work_request else None,

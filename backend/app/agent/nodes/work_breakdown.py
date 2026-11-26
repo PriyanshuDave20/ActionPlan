@@ -33,7 +33,7 @@ def _spec_from_state(state: AgentState) -> ProjectSpecification:
             return ProjectSpecification.model_validate(data)
         except Exception:
             logger.exception("Invalid project specification in state; treating as empty")
-    return ProjectSpecification(title=state.get("original_goal", ""))
+    return ProjectSpecification(title=state.get("project_title") or state.get("original_goal", ""))
 
 
 def _evidence_summary(state: AgentState, limit: int = 8) -> str:

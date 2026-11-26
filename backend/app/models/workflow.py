@@ -56,6 +56,7 @@ class IngestResponse(BaseModel):
 
 class WorkflowSummary(BaseModel):
     workflow_id: str
+    title: str
     goal: str
     updated_at: datetime
     deadline: date | None = None
@@ -78,6 +79,7 @@ class WorkflowExecutionState(str, Enum):
 
 class WorkflowState(BaseModel):
     workflow_id: str
+    project_title: str | None = None
     original_goal: str
     work_request: WorkRequest | None = None
     project_specification: dict[str, Any] | None = None

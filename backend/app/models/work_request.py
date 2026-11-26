@@ -10,6 +10,7 @@ class Person(BaseModel):
 
 
 class WorkRequestInput(BaseModel):
+    title: str | None = Field(default=None, max_length=160)
     goal: str = Field(min_length=1, max_length=2000)
     people_involved: list[Person] = Field(default_factory=list)
     deadline: date | None = None
@@ -21,6 +22,7 @@ class WorkRequestInput(BaseModel):
 
 
 class WorkRequest(BaseModel):
+    title: str | None = None
     goal: str
     people: list[Person] = Field(default_factory=list)
     roles: list[str] = Field(default_factory=list)
@@ -35,6 +37,7 @@ class WorkRequest(BaseModel):
 def compile_work_request(payload: WorkRequestInput) -> WorkRequest:
     roles = sorted({person.role for person in payload.people_involved if person.role})
     return WorkRequest(
+        title=payload.title,
         goal=payload.goal,
         people=payload.people_involved,
         roles=roles,

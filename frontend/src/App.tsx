@@ -190,6 +190,7 @@ function friendlyError(reason: unknown): string {
 }
 
 function HomePage() {
+  const [title, setTitle] = useState("Untitled project");
   const [goal, setGoal] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -210,7 +211,10 @@ function HomePage() {
       setProgress("Creating project…");
       // Async creation: the backend persists a QUEUED workflow, enqueues the
       // job, and returns immediately. No waiting for the LangGraph run.
-      const workflow = await createGoalRequest({ goal: goal.trim() }, false);
+      const workflow = await createGoalRequest(
+        { title: title.trim() || "Untitled project", goal: goal.trim() },
+        false,
+      );
       const workflowId = workflow.workflow_id;
 
       // Hand the selected files to the workflow page, which ingests them
@@ -239,6 +243,17 @@ function HomePage() {
       </p>
 
       <form className="card form" onSubmit={handleSubmit}>
+        <label className="field">
+          <span>Project title</span>
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="e.g. Project Alpha launch plan"
+            maxLength={160}
+            disabled={submitting}
+          />
+        </label>
+
         <label className="field">
           <span>What are you working on?</span>
 
@@ -317,6 +332,7 @@ function WorkflowPage({ workflowId }: { workflowId: string }) {
   const ingestionStartedRef = useRef(false);
 
   const documents = workflow?.execution_metadata?.documents ?? [];
+  const projectTitle = workflow?.project_title?.trim() || workflow?.original_goal;
 
   // After the workflow reaches a terminal state, ingest any documents that
   // were selected during creation. Documents upload only once the initial
@@ -486,7 +502,7 @@ async function decide(decision: string) {
     return (
       <section className="page">
       <p className="eyebrow">PROJECT ISSUE</p>
-      <h1>{workflow.original_goal}</h1>
+      <h1>{projectTitle}</h1>
       <span className="muted mono">{workflow.workflow_id}</span>
       <div className="card error-card" style={{ marginTop: 16 }}>
         <h3>The agent could not finish this assessment.</h3>
@@ -495,6 +511,9 @@ async function decide(decision: string) {
         <div className="action-row">
           <button type="button" className="primary" onClick={handleRetryAssessment} disabled={retrying}>
             {retrying ? "Retrying…" : "Retry assessment"}
+          </button>
+          <button type="button" className="button secondary" onClick={handleContinue} disabled={completing || retrying}>
+            {completing ? "Updating…" : "Continue workflow"}
           </button>
           <button type="button" className="button secondary" onClick={() => navigate("history")}>Back to projects</button>
         </div>
@@ -505,15 +524,11 @@ async function decide(decision: string) {
 
   const tasks = workflow.tasks ?? [];
 
-  const pending = tasks.filter(
-    (task: any) => task.status !== "completed",
-  );
-
   return (
     <section className="page">
     <div className="workflow-head">
     <div>
-    <h1>{workflow.original_goal}</h1>
+    <h1>{projectTitle}</h1>
     <span className="muted mono">{workflow.workflow_id}</span>
     </div>
 
@@ -521,13 +536,11 @@ async function decide(decision: string) {
         type="button"
         className="primary"
         onClick={handleContinue}
-        disabled={completing || pending.length === 0}
+        disabled={completing}
       >
         {completing
           ? "Updating…"
-          : pending.length === 0
-            ? "All tasks complete"
-            : "Continue workflow"}
+          : "Continue workflow"}
       </button>
     </div>
 
@@ -624,6 +637,9 @@ async function decide(decision: string) {
             </>
           ) : null}
         </div>
+        <p className="muted">
+          Slack and Jira are optional hand-offs. You can continue without either.
+        </p>
       </div>
     ) : null}
 
@@ -847,7 +863,7 @@ function HistoryPage() {
                     <span className="project-status">{priorityLabel(workflow.priority)}</span>
                     <span className={`status status-${workflow.execution_state}`}>{executionStatusLabel(workflow.execution_state)}</span>
               </span>
-              <strong>{workflow.goal}</strong>
+              <strong>{workflow.title || workflow.goal}</strong>
               {isProcessing ? (
                 <span className="project-card-meta">Building your plan…</span>
               ) : (

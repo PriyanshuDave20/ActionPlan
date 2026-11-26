@@ -106,6 +106,7 @@ export async function pollWorkflowUntilComplete(
     // Create a minimal workflow object for progress callback
     const progressState: WorkflowState = {
       workflow_id: workflowId,
+      project_title: "",
       original_goal: "",
       execution_state: statusData.execution_state as WorkflowState["execution_state"],
       execution_error: statusData.execution_error,

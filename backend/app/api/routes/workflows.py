@@ -205,9 +205,6 @@ async def execute_recommendation(
             except RuntimeError as error:
                 raise HTTPException(status_code=502, detail=str(error)) from error
 
-    if not results:
-        raise HTTPException(status_code=400, detail="No integration was requested.")
-
     workflow.execution_metadata.setdefault("integrations", []).append(
         {
             "recommendation_id": recommendation_id,
@@ -215,10 +212,11 @@ async def execute_recommendation(
             "results": [result.model_dump(mode="json") for result in results],
         }
     )
+    event_type = "integration_executed" if results else "recommendation_acknowledged"
     return workspace.save(
         workflow,
         payload.version,
-        "integration_executed",
+        event_type,
         recommendation_id,
         {
             "providers": [result.provider for result in results],

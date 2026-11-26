@@ -12,6 +12,7 @@ from app.models.workflow import Blocker, Recommendation
 
 class AgentState(TypedDict, total=False):
     workflow_id: str
+    project_title: str | None
     original_goal: str
     work_request_input: WorkRequestInput
     work_request: WorkRequest

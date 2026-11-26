@@ -36,6 +36,7 @@ def update_memory_node(state: AgentState, memory: MemoryInterface) -> AgentState
 def _state_to_workflow(state: AgentState) -> WorkflowState:
     stored = WorkflowState(
         workflow_id=state.get("workflow_id", ""),
+        project_title=state.get("project_title"),
         original_goal=state.get("original_goal", ""),
         updated_at=utc_now(),
     )

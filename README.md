@@ -115,7 +115,7 @@ When an accepted recommendation is ready for hand-off, use:
 POST /workflows/{workflow_id}/recommendations/{recommendation_id}/execute
 ```
 
-The request must specify one or both integrations:
+Both integrations are optional. Specify either or both when you want a hand-off:
 
 ```json
 {

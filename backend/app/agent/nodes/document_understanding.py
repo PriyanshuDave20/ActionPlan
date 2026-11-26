@@ -79,12 +79,13 @@ def understand_documents_node(state: AgentState, llm: LLMProvider, retriever: Ve
     except Exception:
         logger.exception("Document understanding failed; continuing with an empty specification")
         spec = ProjectSpecification(
-            title=goal,
+            title=state.get("project_title") or goal,
             project_type="general",
             missing_information=[
                 "Document understanding failed; the plan will rely on the goal text only.",
             ],
         )
+    spec.title = state.get("project_title") or spec.title or goal
 
     if not spec.search_queries:
         spec.search_queries = [goal]
